@@ -136,6 +136,16 @@
     border:1px solid #FDE68A;background:#FFFBEB;border-radius:12px;padding:18px 20px;
     font-size:13.5px;color:#92400E;display:flex;gap:12px;
   }
+  .faq{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:12px;overflow:hidden;}
+  .faq summary{
+    padding:18px 20px;font-weight:600;font-size:14.5px;color:var(--ink);
+    cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;
+  }
+  .faq summary::-webkit-details-marker{display:none;}
+  .faq summary::after{content:"+";font-size:20px;color:var(--muted);font-weight:400;}
+  .faq[open] summary::after{content:"−";}
+  .faq[open] summary{border-bottom:1px solid var(--line);}
+  .faq p{margin:0;padding:16px 20px;font-size:13.5px;color:var(--muted);}
   footer{border-top:1px solid var(--line);padding:32px 0;margin-top:20px;}
   .foot-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap;gap:12px;}
   @media (max-width:840px){
@@ -158,6 +168,7 @@
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
       <a href="https://github.com/Sakina-1504/datafusion" target="_blank">Source</a>
     </div>
   </nav>
@@ -167,12 +178,12 @@
       <h1>Turn scattered Excel<br>invoices into <span>one clean report</span></h1>
       <p class="lead">DataFusion Platform merges GST invoice data from multiple Excel files, checks it for errors and tax mismatches, and exports a single formatted report — in a few clicks, on your own machine.</p>
       <div class="cta-row">
-        <a class="btn-primary" href="https://github.com/Sakina-1504/datafusion/releases/download/v1.0.0/DataFusionPlatform.exe">
-          ⬇ Download for Windows
+        <a class="btn-primary" href="https://github.com/Sakina-1504/datafusion/releases/download/v1.0.0/DataFusionPlatform_Setup.exe">
+          ⬇ Download Installer for Windows
         </a>
         <a class="btn-secondary" href="#how">See how it works →</a>
       </div>
-      <div class="meta-line">Free · No sign-up · No internet required after download · <span class="mono">v1.0.0</span></div>
+      <div class="meta-line">Free · Guided install with Start Menu & Desktop shortcut options · Works offline · <span class="mono">v1.0.0</span></div>
     </div>
     <div class="visual" aria-hidden="true">
       <div class="sheet s1"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
@@ -239,13 +250,27 @@
       <div class="badge">● OFFLINE-FIRST</div>
     </div>
   </section>
-  <section style="padding-top:0;">
-    <div class="note">
-      <span>⚠</span>
-      <div>
-        <strong>First run on Windows:</strong> since this app isn't yet digitally signed, Windows will show a blue "Windows protected your PC" screen the first time you open it. This is expected — click <strong>More info → Run anyway</strong> to continue.
-      </div>
+  <section id="faq" style="padding-top:0;">
+    <div class="section-head">
+      <div class="eyebrow"><span class="dot"></span>FAQ</div>
+      <h2>Before you install</h2>
     </div>
+    <details class="faq" open>
+      <summary>Why does Windows show a blue "protected your PC" warning?</summary>
+      <p>This app isn't digitally signed yet (that requires a paid certificate), so Windows shows this caution screen the first time any unsigned app runs — it isn't a sign of a problem. Click <strong>"More info"</strong>, then <strong>"Run anyway"</strong> to continue.</p>
+    </details>
+    <details class="faq">
+      <summary>What does the installer actually do?</summary>
+      <p>It walks you through a short setup wizard: choose whether to add a desktop shortcut, then it installs the app and optionally launches it for you at the end. It also adds a normal "Uninstall" entry in Windows Settings if you ever want to remove it.</p>
+    </details>
+    <details class="faq">
+      <summary>Does it need the internet to work?</summary>
+      <p>No. Once installed, DataFusion Platform runs fully offline — your Excel files and reports never leave your computer.</p>
+    </details>
+    <details class="faq">
+      <summary>Is it free?</summary>
+      <p>Yes, completely free to download and use, no account or sign-up required.</p>
+    </details>
   </section>
   <footer>
     <div class="foot-row">
