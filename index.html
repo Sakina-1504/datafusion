@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataFusion Platform — Consolidate & Reconcile GST Invoices</title>
+<meta name="description" content="Desktop app to consolidate, validate, and reconcile GST invoice data across multiple Excel files. Works fully offline.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#1E3A8A;
+    --navy-deep:#152a63;
+    --emerald:#10B981;
+    --bg:#F8FAFC;
+    --card:#FFFFFF;
+    --ink:#0F172A;
+    --slate:#334155;
+    --muted:#64748B;
+    --line:#E2E8F0;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--slate);
+    font-family:'Inter',sans-serif;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{
+    font-family:'Space Grotesk',sans-serif;
+    color:var(--ink);
+    margin:0;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  a{color:inherit;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px;}
+  nav{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:20px 0;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--ink);}
+  .brand img{width:32px;height:32px;border-radius:8px;}
+  .nav-links{display:flex;gap:28px;font-size:14px;font-weight:500;color:var(--muted);}
+  .nav-links a{text-decoration:none;}
+  .nav-links a:hover{color:var(--ink);}
+  .hero{padding:64px 0 40px;display:grid;grid-template-columns:1.1fr 1fr;gap:56px;align-items:center;}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:'IBM Plex Mono';font-size:12px;font-weight:600;letter-spacing:.04em;
+    color:var(--navy);background:#EEF2FF;border:1px solid #DCE3FA;
+    padding:6px 12px;border-radius:100px;margin-bottom:20px;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);}
+  .hero h1{font-size:44px;line-height:1.12;font-weight:700;letter-spacing:-0.01em;}
+  .hero h1 span{color:var(--navy);}
+  .hero p.lead{font-size:17px;color:var(--muted);margin-top:18px;max-width:480px;}
+  .cta-row{display:flex;gap:14px;align-items:center;margin-top:30px;flex-wrap:wrap;}
+  .btn-primary{
+    display:inline-flex;align-items:center;gap:10px;
+    background:var(--navy);color:#fff;font-weight:600;font-size:15px;
+    padding:14px 22px;border-radius:10px;text-decoration:none;
+    box-shadow:0 1px 2px rgba(15,23,42,.08);
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(30,58,138,.25);}
+  .btn-secondary{
+    display:inline-flex;align-items:center;gap:8px;
+    color:var(--navy);font-weight:600;font-size:14px;text-decoration:none;
+    border-bottom:1px solid transparent;
+  }
+  .btn-secondary:hover{border-color:var(--navy);}
+  .meta-line{font-size:13px;color:var(--muted);margin-top:14px;}
+  .meta-line .mono{color:var(--slate);}
+  .visual{position:relative;height:340px;display:flex;align-items:center;justify-content:center;}
+  .sheet{
+    position:absolute;width:210px;height:130px;border-radius:12px;
+    background:#fff;border:1.5px solid var(--line);
+    box-shadow:0 10px 30px rgba(15,23,42,.06);
+    padding:14px;
+    animation:settle 1.1s cubic-bezier(.22,1,.36,1) both;
+  }
+  .sheet .ln{height:8px;border-radius:4px;background:#E2E8F0;margin-bottom:8px;}
+  .sheet .ln.short{width:60%;}
+  .sheet.s1{transform:translate(-92px,-58px) rotate(-9deg);animation-delay:.05s;}
+  .sheet.s2{transform:translate(78px,-46px) rotate(7deg);animation-delay:.18s;}
+  .sheet.s3{transform:translate(-8px,-8px) rotate(-2deg);animation-delay:.3s;}
+  .result{
+    position:relative;width:230px;background:var(--navy);border-radius:14px;
+    padding:18px;color:#fff;box-shadow:0 20px 40px rgba(30,58,138,.28);
+    animation:rise 1.1s cubic-bezier(.22,1,.36,1) both;animation-delay:.55s;
+    z-index:2;
+  }
+  .result .head{display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono';font-size:11px;color:#C7D2FE;margin-bottom:12px;}
+  .result .check{width:16px;height:16px;border-radius:50%;background:var(--emerald);display:flex;align-items:center;justify-content:center;font-size:10px;}
+  .bars{display:flex;align-items:flex-end;gap:6px;height:54px;margin-bottom:10px;}
+  .bars div{flex:1;background:linear-gradient(180deg,#93C5FD,#3B82F6);border-radius:3px;}
+  .result .total{font-family:'IBM Plex Mono';font-size:13px;font-weight:600;display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.15);padding-top:10px;}
+  @keyframes settle{from{opacity:0;transform:translate(0,-10px) scale(.92);}}
+  @keyframes rise{from{opacity:0;transform:translateY(24px) scale(.94);}to{opacity:1;}}
+  @media (prefers-reduced-motion: reduce){.sheet,.result{animation:none;}}
+  section{padding:64px 0;}
+  .section-head{max-width:560px;margin-bottom:40px;}
+  .section-head .eyebrow{margin-bottom:14px;}
+  .section-head h2{font-size:30px;font-weight:700;}
+  .section-head p{color:var(--muted);margin-top:12px;font-size:15.5px;}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+  .fcard{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px;
+  }
+  .fcard .icon{width:36px;height:36px;border-radius:9px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--navy);}
+  .fcard h3{font-size:15.5px;font-weight:600;margin-bottom:8px;}
+  .fcard p{font-size:13.5px;color:var(--muted);margin:0;}
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative;}
+  .step{position:relative;padding:0 20px 0 0;}
+  .step .num{font-family:'IBM Plex Mono';font-size:13px;color:var(--navy);font-weight:600;margin-bottom:10px;display:block;}
+  .step h3{font-size:15px;font-weight:600;margin-bottom:6px;}
+  .step p{font-size:13.5px;color:var(--muted);margin:0;}
+  .step:not(:last-child)::after{
+    content:"";position:absolute;top:9px;right:0;width:100%;height:1px;background:var(--line);
+  }
+  .band{
+    background:var(--navy-deep);color:#fff;border-radius:20px;padding:40px;
+    display:flex;align-items:center;justify-content:space-between;gap:30px;flex-wrap:wrap;
+  }
+  .band h2{color:#fff;font-size:24px;}
+  .band p{color:#C7D2FE;margin-top:8px;max-width:460px;font-size:14.5px;}
+  .band .badge{
+    font-family:'IBM Plex Mono';font-size:12px;background:rgba(16,185,129,.15);
+    color:#6EE7B7;border:1px solid rgba(16,185,129,.3);padding:8px 14px;border-radius:100px;
+    display:inline-flex;align-items:center;gap:8px;
+  }
+  .note{
+    border:1px solid #FDE68A;background:#FFFBEB;border-radius:12px;padding:18px 20px;
+    font-size:13.5px;color:#92400E;display:flex;gap:12px;
+  }
+  footer{border-top:1px solid var(--line);padding:32px 0;margin-top:20px;}
+  .foot-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap;gap:12px;}
+  @media (max-width:840px){
+    .hero{grid-template-columns:1fr;}
+    .visual{height:280px;}
+    .grid4{grid-template-columns:repeat(2,1fr);}
+    .steps{grid-template-columns:repeat(2,1fr);row-gap:28px;}
+    .step:nth-child(2)::after{display:none;}
+    .hero h1{font-size:34px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand">
+      <img src="icon.png" alt="DataFusion logo" onerror="this.style.display='none'">
+      DataFusion Platform
+    </div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="https://github.com/Sakina-1504/datafusion" target="_blank">Source</a>
+    </div>
+  </nav>
+  <section class="hero">
+    <div>
+      <div class="eyebrow"><span class="dot"></span>WORKS FULLY OFFLINE</div>
+      <h1>Turn scattered Excel<br>invoices into <span>one clean report</span></h1>
+      <p class="lead">DataFusion Platform merges GST invoice data from multiple Excel files, checks it for errors and tax mismatches, and exports a single formatted report — in a few clicks, on your own machine.</p>
+      <div class="cta-row">
+        <a class="btn-primary" href="https://github.com/Sakina-1504/datafusion/releases/latest" target="_blank">
+          ⬇ Download for Windows
+        </a>
+        <a class="btn-secondary" href="#how">See how it works →</a>
+      </div>
+      <div class="meta-line">Free · No sign-up · No internet required after download · <span class="mono">v1.0.0</span></div>
+    </div>
+    <div class="visual" aria-hidden="true">
+      <div class="sheet s1"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
+      <div class="sheet s2"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
+      <div class="sheet s3"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
+      <div class="result">
+        <div class="head"><span>CONSOLIDATED.XLSX</span><span class="check">✓</span></div>
+        <div class="bars">
+          <div style="height:35%"></div><div style="height:60%"></div>
+          <div style="height:45%"></div><div style="height:85%"></div>
+          <div style="height:55%"></div><div style="height:70%"></div>
+        </div>
+        <div class="total"><span>GRAND TOTAL</span><span>₹4,82,600</span></div>
+      </div>
+    </div>
+  </section>
+  <section id="features">
+    <div class="section-head">
+      <div class="eyebrow"><span class="dot"></span>FEATURES</div>
+      <h2>Everything a GST reconciliation needs</h2>
+      <p>Built around the actual workflow of consolidating invoices from several source files before filing.</p>
+    </div>
+    <div class="grid4">
+      <div class="fcard">
+        <div class="icon">⇄</div>
+        <h3>Multi-file consolidation</h3>
+        <p>Import several Excel files at once and merge them into a single working dataset, regardless of column naming differences.</p>
+      </div>
+      <div class="fcard">
+        <div class="icon">✓</div>
+        <h3>Validation & mismatch checks</h3>
+        <p>Flags tax-calculation mismatches, missing fields, and duplicate invoices automatically before you export.</p>
+      </div>
+      <div class="fcard">
+        <div class="icon">▤</div>
+        <h3>Rate, party & monthly summaries</h3>
+        <p>Automatic GST rate-wise, party-wise, company-wise, and month-wise breakdowns — the numbers a filing actually needs.</p>
+      </div>
+      <div class="fcard">
+        <div class="icon">⬇</div>
+        <h3>One-click Excel export</h3>
+        <p>Exports a clean, formatted multi-sheet workbook with grand totals, ready to file or forward.</p>
+      </div>
+    </div>
+  </section>
+  <section id="how">
+    <div class="section-head">
+      <div class="eyebrow"><span class="dot"></span>HOW IT WORKS</div>
+      <h2>From scattered files to filed report</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="num">01</span><h3>Add files</h3><p>Select your Excel invoice files from any folder.</p></div>
+      <div class="step"><span class="num">02</span><h3>Consolidate</h3><p>Files are merged and can be filtered by date, party, rate, or amount.</p></div>
+      <div class="step"><span class="num">03</span><h3>Validate</h3><p>Review flagged mismatches and missing data before export.</p></div>
+      <div class="step"><span class="num">04</span><h3>Export</h3><p>Save one formatted report, ready to share or file.</p></div>
+    </div>
+  </section>
+  <section>
+    <div class="band">
+      <div>
+        <h2>No cloud. No upload. Your data stays on your machine.</h2>
+        <p>DataFusion Platform runs as a native Windows app. Once downloaded, it works completely offline — nothing is sent anywhere.</p>
+      </div>
+      <div class="badge">● OFFLINE-FIRST</div>
+    </div>
+  </section>
+  <section style="padding-top:0;">
+    <div class="note">
+      <span>⚠</span>
+      <div>
+        <strong>First run on Windows:</strong> since this app isn't yet digitally signed, Windows will show a blue "Windows protected your PC" screen the first time you open it. This is expected — click <strong>More info → Run anyway</strong> to continue.
+      </div>
+    </div>
+  </section>
+  <footer>
+    <div class="foot-row">
+      <span>© 2026 DataFusion Platform</span>
+      <span><a href="https://github.com/Sakina-1504/datafusion" target="_blank">View source on GitHub</a></span>
+    </div>
+  </footer>
+</div>
+</body>
+</html>
