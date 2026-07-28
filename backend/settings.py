@@ -9,10 +9,24 @@ the Settings screen in the dashboard reads/writes.
 
 import json
 import os
+import platform
 
-SETTINGS_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "settings.json"
-)
+
+def _user_data_dir():
+    """Returns a writable, per-user folder to store this app's data in."""
+    system = platform.system()
+    if system == "Windows":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        path = os.path.join(base, "DataFusionPlatform")
+    elif system == "Darwin":
+        path = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "DataFusionPlatform")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+        path = os.path.join(base, "DataFusionPlatform")
+    return path
+
+
+SETTINGS_PATH = os.path.join(_user_data_dir(), "settings.json")
 
 DEFAULT_SETTINGS = {
     "default_export_folder": os.path.join(os.path.expanduser("~"), "Desktop"),
@@ -25,24 +39,29 @@ DEFAULT_SETTINGS = {
 
 
 def load_settings():
-    """Returns saved settings merged over the defaults (so new keys
-    added later always have a sensible fallback)."""
+    """Returns saved settings merged over the defaults."""
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(SETTINGS_PATH):
-        try:
+    try:
+        if os.path.exists(SETTINGS_PATH):
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             settings.update(saved)
-        except (json.JSONDecodeError, OSError):
-            pass
+    except (json.JSONDecodeError, OSError):
+        pass
     return settings
 
 
 def save_settings(settings):
-    os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-
+    """Returns True on success, False if the file couldn't be written
+    (permissions, read-only install location, disk full, etc.) --
+    never raises."""
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+        return True
+    except OSError:
+        return False
 
 def get_setting(key, default=None):
     return load_settings().get(key, default)

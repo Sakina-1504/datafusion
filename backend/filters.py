@@ -29,6 +29,45 @@ def _to_number(value, default=None):
         return default
 
 
+def format_indian_number(value, decimals=0):
+    """
+    Formats a number using the Indian numbering system (lakhs/crores),
+    e.g. 1234567 -> "12,34,567" instead of the international
+    "1,234,567" -- whole number by default, no decimal places.
+    Pass decimals=2 to keep paise/cents, e.g. 1234567.5 -> "12,34,567.50".
+    Falls back to str(value) unchanged if it isn't actually numeric.
+    """
+    n = _to_number(value)
+    if n is None:
+        return value
+    sign = "-" if n < 0 else ""
+    n = abs(n)
+    if decimals > 0:
+        n = round(n, decimals)
+        int_part = int(n)
+        frac = n - int_part
+        frac_str = f"{frac:.{decimals}f}".split(".")[1]
+    else:
+        int_part = int(round(n))
+        frac_str = None
+    s = str(int_part)
+    if len(s) <= 3:
+        out = sign + s
+    else:
+        last3 = s[-3:]
+        rest = s[:-3]
+        parts = []
+        while len(rest) > 2:
+            parts.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            parts.insert(0, rest)
+        out = sign + ",".join(parts) + "," + last3
+    if frac_str is not None:
+        out = out + "." + frac_str
+    return out
+
+
 def quick_search(rows, columns, term):
     """Case-insensitive substring match across every column."""
     if not term:

@@ -1,5 +1,6 @@
-﻿__pycache__/
+﻿build/
+dist/
+installer_output/
+DataFusionPlatform_v6.zip/
+__pycache__/
 *.pyc
-data/app.db
-.venv/
-venv/

@@ -17,6 +17,7 @@ crashing.
 
 import re
 from backend.column_mapper import detect_columns
+from backend.filters import _to_number
 
 # GSTIN structure: 2 digit state code + 10 char PAN + 1 entity code
 # + 1 default 'Z' + 1 checksum character. We validate the shape.
@@ -29,6 +30,45 @@ def is_valid_gstin(gstin):
         return False
     gstin = gstin.strip().upper()
     return bool(GSTIN_PATTERN.match(gstin))
+
+
+def review_sheet(data, columns):
+    """
+    Lightweight pre-consolidation check used by the "Review Data" screen.
+    Flags columns that came in with no header (excel_engine.py already
+    renames these to "No heading in source file" at import time, so we
+    just look for that marker), columns that are entirely
+    empty, and rows that are entirely empty -- the sort of thing you
+    want to catch by eye before consolidating, rather than after.
+
+    Never raises: every value is safely stringified before comparison,
+    so unusual cell types (numbers, dates, None) can't crash this.
+    """
+
+    columns = list(columns or [])
+    data = data or []
+
+    missing_header_columns = [c for c in columns if str(c).startswith("No heading in source file")]
+
+    empty_columns = []
+    for col in columns:
+        if col in missing_header_columns:
+            continue
+        if data and all(str(row.get(col, "")).strip() == "" for row in data):
+            empty_columns.append(col)
+
+    empty_rows = []
+    for i, row in enumerate(data):
+        if columns and all(str(row.get(col, "")).strip() == "" for col in columns):
+            empty_rows.append(i)
+
+    return {
+        "missing_header_columns": missing_header_columns,
+        "empty_columns": empty_columns,
+        "empty_rows": empty_rows,
+        "row_count": len(data),
+        "column_count": len(columns),
+    }
 
 
 def validate_sheet(data, columns):
@@ -132,4 +172,131 @@ def validate_sheet(data, columns):
         "skipped_checks": skipped,
         "issues": issues,
         "summary": summary,
+    }
+
+
+def humanize_issue(issue_type, item):
+    """
+    Turns one raw issue entry (as produced above -- a dict, a list of row
+    numbers, or a plain string, depending on issue_type) into a plain
+    English sentence for the exported report, instead of a raw Python
+    dict/list printed as text (e.g. "{'row': 4, 'field': 'taxable_amount'}").
+
+    Row numbers are shown 1-based ("Row 1" = the first data row under the
+    header), which is how a non-technical reader expects rows to be
+    counted, rather than the 0-based index used internally.
+    """
+    def _field_label(field):
+        return str(field).replace("_", " ").strip().title()
+
+    try:
+        if issue_type == "missing_required_fields" and isinstance(item, dict):
+            return f"Row {item['row'] + 1}: '{_field_label(item.get('field'))}' is missing or blank."
+
+        if issue_type == "invalid_gstin" and isinstance(item, dict):
+            return f"Row {item['row'] + 1}: GSTIN '{item.get('value')}' is not a valid GSTIN format."
+
+        if issue_type == "exact_duplicate_rows" and isinstance(item, (list, tuple)):
+            row_nums = [r + 1 for r in item]
+            if len(row_nums) == 2:
+                return f"Rows {row_nums[0]} and {row_nums[1]} are exact duplicates of each other."
+            row_list = ", ".join(str(r) for r in row_nums[:-1]) + f" and {row_nums[-1]}"
+            return f"Rows {row_list} are all exact duplicates of each other."
+
+        if issue_type == "duplicate_invoice_numbers" and isinstance(item, dict):
+            row_nums = [r + 1 for r in item.get("rows", [])]
+            row_list = ", ".join(str(r) for r in row_nums)
+            return f"Invoice number '{item.get('invoice_no')}' is repeated on rows {row_list}."
+
+        if issue_type == "missing_invoice_numbers":
+            return f"Invoice number '{item}' is missing from the sequence (expected but not found)."
+    except Exception:
+        pass
+
+    # Fallback for any unrecognised shape -- still better than a raw repr.
+    return str(item)
+
+
+def check_debit_credit_balance(file_results):
+    """
+    Pre-consolidation checkpoint: for every sheet across the given
+    file results, detect Debit / Credit columns (via column_mapper)
+    and total them up. Used to warn the user -- before they consolidate
+    -- if debits and credits don't tie out, and exactly which
+    file/sheet is responsible.
+
+    file_results: list of result dicts, each shaped like:
+        {"file_name": ..., "file_path": ..., "sheets": {sheet_name: {"columns": [...], "data": [...]}}}
+
+    Returns:
+        {
+            "checked": bool,       # True if at least one sheet had BOTH a debit
+                                    # and credit column detected
+            "balanced": bool,      # True if totals match (within a cent)
+            "total_debit": float,
+            "total_credit": float,
+            "difference": float,
+            "mismatches": [
+                {
+                    "file_name": str, "file_path": str, "sheet_name": str,
+                    "debit_column": str, "credit_column": str,
+                    "debit_total": float, "credit_total": float,
+                    "difference": float, "row_count": int,
+                },
+                ...
+            ],
+        }
+
+    Sheets where a debit or credit column simply couldn't be found are
+    silently skipped (not every sheet is a ledger), rather than being
+    reported as a mismatch.
+    """
+    total_debit = 0.0
+    total_credit = 0.0
+    mismatches = []
+    checked_any = False
+
+    for result in file_results or []:
+        fname = result.get("file_name", "")
+        fpath = result.get("file_path", "")
+        for sheet_name, sheet in (result.get("sheets") or {}).items():
+            columns = sheet.get("columns", [])
+            data = sheet.get("data", [])
+            mapping = detect_columns(columns)
+
+            debit_col = mapping.get("debit")
+            credit_col = mapping.get("credit")
+            if not debit_col or not credit_col:
+                continue
+
+            checked_any = True
+            sheet_debit = sum(_to_number(row.get(debit_col), 0) or 0 for row in data)
+            sheet_credit = sum(_to_number(row.get(credit_col), 0) or 0 for row in data)
+
+            total_debit += sheet_debit
+            total_credit += sheet_credit
+
+            diff = round(sheet_debit - sheet_credit, 2)
+            if abs(diff) > 0.01:
+                mismatches.append({
+                    "file_name": fname,
+                    "file_path": fpath,
+                    "sheet_name": sheet_name,
+                    "debit_column": debit_col,
+                    "credit_column": credit_col,
+                    "debit_total": sheet_debit,
+                    "credit_total": sheet_credit,
+                    "difference": diff,
+                    "row_count": len(data),
+                })
+
+    overall_diff = round(total_debit - total_credit, 2)
+
+    return {
+        "checked": checked_any,
+        "balanced": checked_any and abs(overall_diff) <= 0.01,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "difference": overall_diff,
+        "mismatches": mismatches,
     }

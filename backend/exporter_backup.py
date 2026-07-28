@@ -47,24 +47,6 @@ THIN_BORDER = Border(
     top=Side(style="thin", color="D9D9D9"), bottom=Side(style="thin", color="D9D9D9"),
 )
 
-# One distinct colour per validation-issue type, so the "Issues Found"
-# sheet is scannable at a glance -- e.g. every "Missing Required Fields"
-# row is the same amber shade, every "Exact Duplicate Rows" row is the
-# same blue shade, etc. (bg_hex, text_hex, label used in the legend).
-ISSUE_TYPE_COLORS = {
-    "missing_required_fields":    ("FEF3C7", "92400E", "Missing Required Fields"),
-    "invalid_gstin":               ("FCE7F3", "9D174D", "Invalid GSTIN"),
-    "exact_duplicate_rows":        ("DBEAFE", "1E40AF", "Exact Duplicate Rows"),
-    "duplicate_invoice_numbers":   ("E0E7FF", "3730A3", "Duplicate Invoice Numbers"),
-    "missing_invoice_numbers":     ("FEE2E2", "991B1B", "Missing Invoice Numbers"),
-}
-DEFAULT_ISSUE_COLOR = ("F3F4F6", "374151", "Other")
-
-# Matches the "File: {name} | Sheet: {sheet} | {detail}" strings built
-# in ui/dashboard.py._compute_all_issues, so the sheet name and file
-# name can be pulled into their own columns instead of one long string.
-_ISSUE_DETAIL_RE = re.compile(r"^File:\s*(.*?)\s*\|\s*Sheet:\s*(.*?)\s*\|\s*(.*)$")
-
 
 def _to_number(value, default=0.0):
     try:
@@ -223,7 +205,7 @@ def _write_table(ws, columns, rows, start_row=1, add_grand_total=True):
             if col in num_cols and value not in ("", None):
                 try:
                     cell.value = float(value)
-                    cell.number_format = "#,##,##0.00"
+                    cell.number_format = "#,##0.00"
                 except (ValueError, TypeError):
                     pass
 
@@ -238,7 +220,7 @@ def _write_table(ws, columns, rows, start_row=1, add_grand_total=True):
             cell.border = THIN_BORDER
             if col in totals:
                 cell.value = totals[col]
-                cell.number_format = "#,##,##0.00"
+                cell.number_format = "#,##0.00"
             elif not label_written:
                 cell.value = "GRAND TOTAL"
                 label_written = True
@@ -265,7 +247,10 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
                                 clickable Source File reference
       5. Company Summary      - totals per company (from the always-filled
                                  "Company Name" column)
-      6. Issues Found         - every validation problem, with reference
+      6. GST Summary          - rate-wise, CGST/SGST/IGST totals
+      7. Monthly Summary      - totals per month, for filing/MIS trend
+      8. Party Summary        - customer/vendor wise totals
+      9. Issues Found         - every validation problem, with reference
     Any section is skipped gracefully if its data wasn't supplied.
     """
 
@@ -303,19 +288,6 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
     # Company Name always leads the sheet since every row is tagged with it.
     if "Company Name" in columns:
         columns = ["Company Name"] + [c for c in columns if c != "Company Name"]
-    # "Account" is redundant/mostly blank whenever a more specific
-    # "Account (2)" column is also present -- drop it so the TOTAL row
-    # label doesn't visually land in the wrong column.
-    if "Account" in columns and "Account (2)" in columns:
-        # Merge per row instead of dropping one column outright -- some
-        # source files only put their real account label in "Account"
-        # (no "Account (2)" at all in that file), others only put it in
-        # "Account (2)". Keep whichever one actually has a value.
-        for row in rows:
-            merged_val = row.get("Account (2)") or row.get("Account") or ""
-            row["Account"] = merged_val
-            row.pop("Account (2)", None)
-        columns = [c for c in columns if c != "Account (2)"]
     has_source = bool(rows) and "__source_file" in rows[0]
     display_columns = columns + (["Source File"] if has_source else [])
 
@@ -334,17 +306,11 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
         ("Source Files", "Every source file (sub file) that went into this report, with the Company Name assigned to it and how many rows it contributed. Click a 'Source File' cell on Consolidated Data to jump here."),
         ("Consolidated Data", "Every row from every imported file, merged, with a Company Name column, a clickable Source File reference, and a Grand Total row."),
         ("Company Summary", "Taxable value, tax and row count per company -- useful when you're handling more than one client at once."),
+        ("GST Summary", "Rate-wise (5%/12%/18%/28%) taxable and tax totals, ready for GSTR-1 rate-wise filing."),
+        ("Monthly Summary", "Taxable and tax totals grouped by month -- for filing trend or a management report."),
+        ("Party Summary", "Taxable value, tax and invoice count per customer/vendor."),
+        ("Issues Found", "Every data-quality issue detected (missing fields, invalid GSTIN, duplicates, tax mismatches) with its exact file/sheet/row reference."),
     ]
-    # "Issues Found" is only listed in the guide if the report actually
-    # ends up with an Issues Found sheet (i.e. there's at least one
-    # real data-quality issue to show).
-    _has_issues = bool(validation_issues) and any(
-        len(v) for v in validation_issues.values()
-    ) if isinstance(validation_issues, dict) else bool(validation_issues)
-    if _has_issues:
-        guide_rows.append(
-            ("Issues Found", "Every data-quality issue detected (missing fields, invalid GSTIN, duplicates, tax mismatches) with its exact file/sheet/row reference.")
-        )
     r = 4
     header_row = r
     for c_idx, text in ((1, "Sheet"), (2, "What it's for")):
@@ -392,36 +358,25 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
     ws.cell(row=r, column=1, value="Total Rows").font = Font(bold=True)
     ws.cell(row=r, column=2, value=len(rows))
     r += 1
-
-    # If a Debit/Credit Checkpoint section is about to be shown below,
-    # skip those same two columns here -- otherwise "Total Debit" and
-    # "Total Credit" get printed twice (once here, once in the
-    # Checkpoint section a few rows down), which crowds the sheet and
-    # makes the two nearly-identical rows hard to tell apart.
-    checkpoint = _credit_debit_checkpoint(rows, columns)
-    has_checkpoint_section = checkpoint is not None and sections.get("checkpoint", True)
-    skip_cols = {checkpoint["debit_col"], checkpoint["credit_col"]} if has_checkpoint_section else set()
-
     for col, total in totals.items():
-        if col in skip_cols:
-            continue
         ws.cell(row=r, column=1, value=f"Total {col}").font = Font(bold=True)
         cell = ws.cell(row=r, column=2, value=total)
-        cell.number_format = "#,##,##0.00"
+        cell.number_format = "#,##0.00"
         r += 1
 
-    if has_checkpoint_section:
+    checkpoint = _credit_debit_checkpoint(rows, columns)
+    if checkpoint is not None and sections.get("checkpoint", True):
         r += 1
         ws.cell(row=r, column=1, value="Checkpoint: Credit = Debit").font = Font(bold=True, size=13, color="1E3A8A")
         r += 1
         ws.cell(row=r, column=1, value=f"Total {checkpoint['debit_col']}").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["total_debit"]).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=checkpoint["total_debit"]).number_format = "#,##0.00"
         r += 1
         ws.cell(row=r, column=1, value=f"Total {checkpoint['credit_col']}").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["total_credit"]).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=checkpoint["total_credit"]).number_format = "#,##0.00"
         r += 1
         ws.cell(row=r, column=1, value="Difference (Debit - Credit)").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["difference"]).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=checkpoint["difference"]).number_format = "#,##0.00"
         r += 1
         colr = "16A34A" if checkpoint["matched"] else "B91C1C"
         status_text = "\u2714 Matched -- Credit and Debit tie out" if checkpoint["matched"] else "\u26A0 Mismatch -- Credit and Debit do not tie out"
@@ -431,13 +386,13 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
     if gst_summary and "error" not in gst_summary and sections.get("gst", True):
         r += 1
         ws.cell(row=r, column=1, value="CGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("cgst_total", 0)).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=gst_summary.get("cgst_total", 0)).number_format = "#,##0.00"
         r += 1
         ws.cell(row=r, column=1, value="SGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("sgst_total", 0)).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=gst_summary.get("sgst_total", 0)).number_format = "#,##0.00"
         r += 1
         ws.cell(row=r, column=1, value="IGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("igst_total", 0)).number_format = "#,##,##0.00"
+        ws.cell(row=r, column=2, value=gst_summary.get("igst_total", 0)).number_format = "#,##0.00"
         r += 1
         mismatches = gst_summary.get("tax_mismatches", [])
         colr = "B91C1C" if mismatches else "16A34A"
@@ -526,120 +481,70 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
     if (company_summary and "error" not in company_summary and company_summary.get("companies")
             and sections.get("company", True)):
         ws_co = wb.create_sheet("Company Summary")
-        co_companies = company_summary["companies"]
-        # Skip the Taxable/Tax Total columns entirely if every company's
-        # total is zero -- that means the imported data had no GST/tax
-        # columns to begin with (e.g. a plain trial balance), so showing
-        # two all-zero columns would just be noise.
-        has_tax_data = any(
-            vals.get("taxable_total") or vals.get("tax_total")
-            for vals in co_companies.values()
-        )
-        # If the data has Debit/Credit columns (e.g. a trial balance),
-        # add per-company Total Debit / Total Credit columns too.
-        co_debit_credit_mapping = detect_columns(columns)
-        co_debit_col = co_debit_credit_mapping.get("debit")
-        co_credit_col = co_debit_credit_mapping.get("credit")
-        has_debit_credit = bool(co_debit_col and co_credit_col)
-        co_debit_totals = {}
-        co_credit_totals = {}
-        if has_debit_credit:
-            for row in rows:
-                name = row.get("Company Name", "")
-                co_debit_totals[name] = co_debit_totals.get(name, 0.0) + _to_number(row.get(co_debit_col))
-                co_credit_totals[name] = co_credit_totals.get(name, 0.0) + _to_number(row.get(co_credit_col))
-
-        co_columns = ["Company Name"]
-        if has_tax_data:
-            co_columns += ["Taxable Total", "Tax Total"]
-        if has_debit_credit:
-            co_columns += ["Total Debit", "Total Credit"]
-        co_columns.append("Row Count")
-
         co_rows = []
-        for name, vals in co_companies.items():
-            row = {"Company Name": name, "Row Count": vals["row_count"]}
-            if has_tax_data:
-                row["Taxable Total"] = vals["taxable_total"]
-                row["Tax Total"] = vals["tax_total"]
-            if has_debit_credit:
-                row["Total Debit"] = round(co_debit_totals.get(name, 0.0), 2)
-                row["Total Credit"] = round(co_credit_totals.get(name, 0.0), 2)
-            co_rows.append(row)
-        _write_table(ws_co, co_columns, co_rows, add_grand_total=False)
-    # ---------- 6. Issues Found sheet ----------
+        for name, vals in company_summary["companies"].items():
+            co_rows.append({
+                "Company Name": name,
+                "Taxable Total": vals["taxable_total"],
+                "Tax Total": vals["tax_total"],
+                "Row Count": vals["row_count"],
+            })
+        _write_table(ws_co, ["Company Name", "Taxable Total", "Tax Total", "Row Count"], co_rows, add_grand_total=False)
+
+    # ---------- 6. GST Summary sheet ----------
+    if gst_summary and "error" not in gst_summary and sections.get("gst", True):
+        ws3 = wb.create_sheet("GST Summary")
+        gst_rows = []
+        for rate, vals in sorted(gst_summary.get("rate_wise", {}).items()):
+            gst_rows.append({
+                "GST Rate (%)": rate,
+                "Taxable Total": vals["taxable_total"],
+                "Tax Total": vals["tax_total"],
+                "Row Count": vals["row_count"],
+            })
+        _write_table(ws3, ["GST Rate (%)", "Taxable Total", "Tax Total", "Row Count"], gst_rows, add_grand_total=False)
+
+    # ---------- 7. Monthly Summary sheet ----------
+    if (month_summary and "error" not in month_summary and month_summary.get("months")
+            and sections.get("monthly", False)):
+        ws_mo = wb.create_sheet("Monthly Summary")
+        month_rows = []
+        for month, vals in sorted(month_summary["months"].items()):
+            month_rows.append({
+                "Month": month,
+                "Taxable Total": vals["taxable_total"],
+                "Tax Total": vals["tax_total"],
+                "Row Count": vals["row_count"],
+            })
+        _write_table(ws_mo, ["Month", "Taxable Total", "Tax Total", "Row Count"], month_rows, add_grand_total=False)
+
+    # ---------- 8. Party Summary sheet ----------
+    if party_summary and "error" not in party_summary and sections.get("party", True):
+        ws4 = wb.create_sheet("Party Summary")
+        party_rows = []
+        for name, vals in party_summary.get("parties", {}).items():
+            party_rows.append({
+                "Party Name": name,
+                "Taxable Total": vals["taxable_total"],
+                "Tax Total": vals["tax_total"],
+                "Invoice Count": vals["invoice_count"],
+            })
+        _write_table(ws4, ["Party Name", "Taxable Total", "Tax Total", "Invoice Count"], party_rows, add_grand_total=False)
+
+    # ---------- 9. Issues Found sheet ----------
     if validation_issues:
         ws5 = wb.create_sheet("Issues Found")
-
-        # ---- Legend: what each colour means, so it's self-explanatory ----
-        ws5.cell(row=1, column=1, value="Colour Guide:").font = Font(bold=True, size=11)
-        used_types = [t for t in validation_issues.keys() if validation_issues.get(t)]
-        legend_col = 2
-        for issue_type in used_types:
-            bg, fg, label = ISSUE_TYPE_COLORS.get(issue_type, DEFAULT_ISSUE_COLOR)
-            c = ws5.cell(row=1, column=legend_col, value=f"  {label}  ")
-            c.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-            c.font = Font(bold=True, color=fg, size=10)
-            c.alignment = Alignment(horizontal="center")
-            legend_col += 1
-
-        header_row = 3
-        columns5 = ["Issue Type", "Source File", "Sheet", "Details"]
-        for c_idx, col in enumerate(columns5, start=1):
-            cell = ws5.cell(row=header_row, column=c_idx, value=col)
-            cell.font = HEADER_FONT
-            cell.fill = HEADER_FILL
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = THIN_BORDER
-
-        r5 = header_row
-        any_rows = False
+        issue_rows = []
         for issue_type, items in validation_issues.items():
-            if not items:
-                continue
-            bg, fg, label = ISSUE_TYPE_COLORS.get(issue_type, DEFAULT_ISSUE_COLOR)
-            row_fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-            row_font = Font(color=fg, size=11)
             for item in items:
-                any_rows = True
-                r5 += 1
-                text = str(item)
-                m = _ISSUE_DETAIL_RE.match(text)
-                if m:
-                    fname, sheet_name, detail = m.group(1), m.group(2), m.group(3)
-                else:
-                    fname, sheet_name, detail = "", "", text
-
-                type_cell = ws5.cell(row=r5, column=1, value=label)
-                src_cell = ws5.cell(row=r5, column=2, value=fname)
-                sheet_cell = ws5.cell(row=r5, column=3, value=sheet_name)
-                detail_cell = ws5.cell(row=r5, column=4, value=detail)
-
-                for cell in (type_cell, src_cell, sheet_cell, detail_cell):
-                    cell.fill = row_fill
-                    cell.font = row_font
-                    cell.border = THIN_BORDER
-
-                # Clicking the source file jumps to its row on "Source
-                # Files" (if that sheet exists) or opens it on disk.
-                target_row = file_row_map.get(fname)
-                src_path = file_paths.get(fname)
-                if target_row:
-                    src_cell.hyperlink = f"#'Source Files'!B{target_row}"
-                    src_cell.font = Font(color="1155CC", underline="single", size=11)
-                elif src_path:
-                    src_cell.hyperlink = f"file:///{src_path}"
-                    src_cell.font = Font(color="1155CC", underline="single", size=11)
-
-        if any_rows:
-            ws5.freeze_panes = ws5.cell(row=header_row + 1, column=1)
-            ws5.auto_filter.ref = f"A{header_row}:D{r5}"
-            ws5.column_dimensions["A"].width = 26
-            ws5.column_dimensions["B"].width = 32
-            ws5.column_dimensions["C"].width = 22
-            ws5.column_dimensions["D"].width = 55
+                issue_rows.append({
+                    "Issue Type": issue_type.replace("_", " ").title(),
+                    "Details": str(item),
+                })
+        if issue_rows:
+            _write_table(ws5, ["Issue Type", "Details"], issue_rows, add_grand_total=False)
         else:
-            ws5.cell(row=header_row + 1, column=1, value="No issues found").font = Font(bold=True, color="16A34A")
+            ws5.cell(row=1, column=1, value="No issues found").font = Font(bold=True, color="16A34A")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     wb.save(output_path)
@@ -718,24 +623,6 @@ def open_containing_folder(path):
         return False
 
 
-def highlighted_copy_path(file_path, sheet_name):
-    """Returns the deterministic path of the highlighted reference copy
-    that open_file_with_highlighted_columns() creates for a given
-    source file + sheet (same folder, same naming pattern it always
-    uses). Doesn't check whether the file actually exists yet -- callers
-    that need that should os.path.exists() the result themselves.
-
-    Exposed as its own function (rather than only inline inside
-    open_file_with_highlighted_columns) so the Debit/Credit Checkpoint's
-    'Refresh' button can look for a saved, corrected copy in the same
-    place 'Open File' would have written one, without duplicating the
-    naming logic."""
-    out_dir = os.path.join(_user_data_dir(), "highlighted_references")
-    base_name = os.path.splitext(os.path.basename(file_path))[0]
-    safe_sheet = re.sub(r'[\\/*?:"<>|\[\]]', "_", sheet_name)[:30]
-    return os.path.join(out_dir, f"{base_name}__{safe_sheet}__highlighted.xlsx")
-
-
 def open_file_with_highlighted_columns(file_path, sheet_name, columns_to_highlight):
     """Used by the Debit/Credit Checkpoint screen: makes a copy of the
     given source file with the named column(s) highlighted in yellow
@@ -747,31 +634,29 @@ def open_file_with_highlighted_columns(file_path, sheet_name, columns_to_highlig
     <app data>/highlighted_references and reused/overwritten on
     repeat opens of the same file/sheet/columns combination.
 
-    Returns a (success, reason) tuple. success is True if the
-    highlighted copy was created and opened; reason is None on
-    success, or a short human-readable message on failure explaining
-    why the source file, sheet, or columns could not be found.
+    Returns True if the highlighted copy was created and opened,
+    False if the source file, sheet, or columns could not be found.
     """
     if not file_path or not os.path.exists(file_path):
-        return False, "The source file could not be found on disk."
+        return False
 
     wanted = {str(c).strip() for c in (columns_to_highlight or []) if c}
     if not wanted:
-        return False, "No Debit/Credit columns were specified to highlight."
+        return False
 
     try:
         wb = load_workbook(file_path)
-    except Exception as e:
-        return False, f"Couldn't open the workbook: {e}"
+    except Exception:
+        return False
 
     if sheet_name not in wb.sheetnames:
-        return False, f"Sheet '{sheet_name}' was not found in this file."
+        return False
     ws = wb[sheet_name]
 
     header_row = next(ws.iter_rows(min_row=1, max_row=1), ())
     col_indexes = [cell.column for cell in header_row if str(cell.value).strip() in wanted]
     if not col_indexes:
-        return False, "None of the Debit/Credit columns were found in the sheet header."
+        return False
 
     for col_idx in col_indexes:
         for (cell,) in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=col_idx, max_col=col_idx):
@@ -779,30 +664,13 @@ def open_file_with_highlighted_columns(file_path, sheet_name, columns_to_highlig
 
     out_dir = os.path.join(_user_data_dir(), "highlighted_references")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = highlighted_copy_path(file_path, sheet_name)
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    safe_sheet = re.sub(r'[\\/*?:"<>|\[\]]', "_", sheet_name)[:30]
+    out_path = os.path.join(out_dir, f"{base_name}__{safe_sheet}__highlighted.xlsx")
 
     try:
         wb.save(out_path)
-    except PermissionError:
-        # The existing copy is most likely still open in Excel (Windows
-        # locks open files), so overwriting it fails with Errno 13.
-        # Fall back to a fresh, uniquely-named copy instead of failing
-        # outright -- the user doesn't need to close their existing
-        # window just to look at the reference again.
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
-        safe_sheet = re.sub(r'[\\/*?:"<>|\[\]]', "_", sheet_name)[:30]
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.join(out_dir, f"{base_name}__{safe_sheet}__highlighted_{stamp}.xlsx")
-        try:
-            wb.save(out_path)
-        except Exception as e:
-            return False, (
-                "Couldn't save the highlighted copy because the file appears to be "
-                f"open elsewhere (e.g. in Excel). Close it and try again. ({e})"
-            )
-    except Exception as e:
-        return False, f"Couldn't save the highlighted copy: {e}"
+    except Exception:
+        return False
 
-    if open_file(out_path):
-        return True, None
-    return False, "The highlighted copy was saved but couldn't be opened automatically."
+    return open_file(out_path)

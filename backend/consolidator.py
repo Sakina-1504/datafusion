@@ -248,6 +248,238 @@ def gst_rate_summary(data, columns):
     }
 
 
+def credit_debit_checkpoint(rows, columns, file_paths=None):
+    """
+    Checks whether Total Debit equals Total Credit -- a common tie-out
+    check before a report is considered final -- both overall AND
+    broken down by the exact file/sheet each row came from, so a
+    mismatch can be traced straight back to its source instead of just
+    showing one grand "doesn't match" number.
+
+    For each mismatched file/sheet, also tries to point at the single
+    most likely culprit row -- either a row whose lone Debit/Credit
+    value exactly (or closely) matches the shortfall, which usually
+    means a duplicated/misplaced entry, or -- if nothing matches --
+    a plain-English note that the fix is probably a missing entry
+    rather than a bad one. This is what powers the "Open File" button
+    jumping straight to a specific row instead of just the sheet.
+
+    file_paths: optional {file_name: file_path} so the UI can offer an
+    "Open File" button next to each mismatched file/sheet.
+
+    Returns None if the data doesn't have both a debit and a credit
+    column (nothing to check, so the checkpoint is simply skipped
+    rather than showing a false mismatch). Otherwise returns:
+        {
+            "debit_col": ..., "credit_col": ...,
+            "total_debit": ..., "total_credit": ..., "difference": ...,
+            "matched": bool,
+            "mismatches": [
+                {"file_name":..., "sheet_name":..., "file_path":...,
+                 "debit_col":..., "credit_col":...,
+                 "total_debit":..., "total_credit":..., "difference":...,
+                 "row_count":...,
+                 "suspect_row": int or None,      # 1-based Excel row number
+                 "suspect_column": str or None,    # debit_col or credit_col
+                 "suspect_value": float or None,
+                 "suspect_match": "exact"|"closest"|None,
+                 "guidance": str},                 # plain-English next step
+                ...
+            ],
+        }
+    """
+    mapping = detect_columns(columns)
+    debit_col = mapping.get("debit")
+    credit_col = mapping.get("credit")
+    if not debit_col or not credit_col:
+        return None
+
+    file_paths = file_paths or {}
+    groups = {}   # (file_name, sheet_name) -> running totals + per-row detail
+    order = []
+    total_debit = total_credit = 0.0
+
+    for row in rows:
+        fname = row.get("__source_file", "Unknown")
+        sheet = row.get("__source_sheet", "Unknown")
+        key = (fname, sheet)
+        if key not in groups:
+            groups[key] = {"total_debit": 0.0, "total_credit": 0.0, "row_count": 0, "detail": []}
+            order.append(key)
+        d = _to_number(row.get(debit_col))
+        c = _to_number(row.get(credit_col))
+        g = groups[key]
+        g["row_count"] += 1
+        # 1-based Excel row number, assuming row 1 is the header (same
+        # assumption exporter.open_file_with_highlighted_columns makes).
+        g["detail"].append({"excel_row": g["row_count"] + 1, "debit": d, "credit": c})
+        g["total_debit"] += d
+        g["total_credit"] += c
+        total_debit += d
+        total_credit += c
+
+    def _find_suspect(detail, diff, debit_col, credit_col):
+        """diff = total_debit - total_credit for this sheet. Looks for a
+        single row whose value in the "heavier" column matches the
+        shortfall -- the classic sign of a duplicated or misplaced
+        entry. Falls back to the closest candidate if nothing matches
+        exactly, and gives up (returns all-None) if nothing is even
+        close, since guessing wrong is worse than not guessing."""
+        target = abs(diff)
+        if target < 0.01:
+            return None, None, None, None
+        # If Debit is the heavier side, a lone/duplicated Debit entry is
+        # the likely culprit; otherwise look at Credit.
+        heavy_col_name = debit_col if diff > 0 else credit_col
+        heavy_key = "debit" if diff > 0 else "credit"
+
+        best = None
+        best_gap = None
+        exact = None
+        for d in detail:
+            val = d[heavy_key]
+            if val <= 0:
+                continue
+            gap = abs(val - target)
+            if gap < 0.01:
+                exact = d
+                break
+            if best_gap is None or gap < best_gap:
+                best, best_gap = d, gap
+
+        if exact:
+            return exact["excel_row"], heavy_col_name, exact[heavy_key], "exact"
+        # Only surface a "closest" guess if it's reasonably close --
+        # otherwise it's just noise that sends the user to the wrong row.
+        if best is not None and best_gap <= target * 0.5:
+            return best["excel_row"], heavy_col_name, best[heavy_key], "closest"
+        return None, None, None, None
+
+    mismatches = []
+    for fname, sheet in order:
+        g = groups[(fname, sheet)]
+        diff = round(g["total_debit"] - g["total_credit"], 2)
+        if abs(diff) >= 0.01:
+            s_row, s_col, s_val, s_match = _find_suspect(g["detail"], diff, debit_col, credit_col)
+
+            heavier = debit_col if diff > 0 else credit_col
+            lighter = credit_col if diff > 0 else debit_col
+            if s_match == "exact":
+                guidance = (
+                    f"Row {s_row}'s '{heavier}' value of {s_val:,.2f} exactly matches the "
+                    f"shortfall -- it's likely a duplicated or misplaced entry. Check whether "
+                    f"it should be removed, corrected, or moved to '{lighter}'."
+                )
+            elif s_match == "closest":
+                guidance = (
+                    f"No exact match, but Row {s_row}'s '{heavier}' value of {s_val:,.2f} is the "
+                    f"closest single entry to the shortfall of {abs(diff):,.2f} -- worth checking "
+                    f"first, though it may not be the actual cause."
+                )
+            else:
+                guidance = (
+                    f"No single row accounts for the {abs(diff):,.2f} shortfall -- it's likely a "
+                    f"transaction missing from '{lighter}' rather than a bad entry already in the "
+                    f"sheet. Add the missing entry to '{lighter}' rather than editing an existing row."
+                )
+
+            mismatches.append({
+                "file_name": fname,
+                "sheet_name": sheet,
+                "file_path": file_paths.get(fname),
+                "debit_col": debit_col,
+                "credit_col": credit_col,
+                "total_debit": round(g["total_debit"], 2),
+                "total_credit": round(g["total_credit"], 2),
+                "difference": diff,
+                "row_count": g["row_count"],
+                "suspect_row": s_row,
+                "suspect_column": s_col,
+                "suspect_value": s_val,
+                "suspect_match": s_match,
+                "guidance": guidance,
+            })
+
+    difference = round(total_debit - total_credit, 2)
+    # IMPORTANT: "matched" is NOT just "does the grand total tie out".
+    # Two files/sheets with opposite mismatches (one debit-heavy, one
+    # credit-heavy) can cancel out and make the grand total look fine
+    # even though every individual file is genuinely wrong -- so this
+    # only counts as matched if the grand total ties out AND every
+    # individual file/sheet in `mismatches` is also clean.
+    return {
+        "debit_col": debit_col,
+        "credit_col": credit_col,
+        "total_debit": round(total_debit, 2),
+        "total_credit": round(total_credit, 2),
+        "difference": difference,
+        "matched": abs(difference) < 0.01 and not mismatches,
+        "mismatches": mismatches,
+    }
+
+
+def journal_wise_summary(data, columns):
+    """
+    Totals Debit and Credit per Journal Number + Journal Name -- the
+    ledger-style breakdown most CA users actually want, instead of a
+    flat row list. Grouped on the PAIR of (journal number, journal
+    name) so two different journals that happen to share a name still
+    show up as separate lines.
+
+    Returns None if neither a Journal Number nor a Journal Name column
+    could be detected (nothing to group by). Otherwise:
+        {
+            "journal_no_col": ..., "journal_name_col": ...,
+            "debit_col": ..., "credit_col": ...,
+            "journals": {
+                (journal_no, journal_name): {
+                    "debit_total": ..., "credit_total": ...,
+                    "difference": ..., "row_count": ...
+                }, ...
+            }
+        }
+    """
+    mapping = detect_columns(columns)
+    journal_no_col = mapping.get("journal_no")
+    journal_name_col = mapping.get("journal_name")
+    debit_col = mapping.get("debit")
+    credit_col = mapping.get("credit")
+
+    if not journal_no_col and not journal_name_col:
+        return None
+
+    journals = {}
+    order = []
+    for row in data:
+        jno = str(row.get(journal_no_col, "")).strip() if journal_no_col else ""
+        jname = str(row.get(journal_name_col, "")).strip() if journal_name_col else ""
+        key = (jno or "(No Journal No.)", jname or "(No Journal Name)")
+        if key not in journals:
+            journals[key] = {"debit_total": 0.0, "credit_total": 0.0, "row_count": 0}
+            order.append(key)
+        if debit_col:
+            journals[key]["debit_total"] += _to_number(row.get(debit_col))
+        if credit_col:
+            journals[key]["credit_total"] += _to_number(row.get(credit_col))
+        journals[key]["row_count"] += 1
+
+    result_journals = {}
+    for key in order:
+        vals = journals[key]
+        result_journals[key] = {
+            "debit_total": round(vals["debit_total"], 2),
+            "credit_total": round(vals["credit_total"], 2),
+            "difference": round(vals["debit_total"] - vals["credit_total"], 2),
+            "row_count": vals["row_count"],
+        }
+
+    return {
+        "journal_no_col": journal_no_col, "journal_name_col": journal_name_col,
+        "debit_col": debit_col, "credit_col": credit_col,
+        "journals": result_journals,
+    }
+
+
 def party_wise_summary(data, columns):
     """Totals taxable value and tax per customer/vendor (party_name column)."""
 
