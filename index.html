@@ -6,155 +6,204 @@
 <title>DataFusion Platform — Consolidate & Reconcile GST Invoices</title>
 <meta name="description" content="Desktop app to consolidate, validate, and reconcile GST invoice data across multiple Excel files. Works fully offline.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --navy:#1E3A8A;
-    --navy-deep:#152a63;
-    --emerald:#10B981;
-    --bg:#F8FAFC;
+    --ledger:#1D4ED8;      /* app-logo blue */
+    --ledger-deep:#152F73;
+    --paper:#F5F7FC;       /* cool light background */
+    --paper-line:#DEE6F5;  /* faint rule lines */
+    --brass:#2563EB;       /* accent, same family as brand blue */
+    --brass-soft:#E4EBFC;
+    --stamp:#2563EB;       /* validated stamp, blue */
+    --ink:#0F1B33;
+    --slate:#3C4A5C;
+    --muted:#6B7A90;
     --card:#FFFFFF;
-    --ink:#0F172A;
-    --slate:#334155;
-    --muted:#64748B;
-    --line:#E2E8F0;
   }
   *{box-sizing:border-box;}
   html{scroll-behavior:smooth;}
   body{
     margin:0;
-    background:var(--bg);
+    background:
+      linear-gradient(var(--paper-line) 1px, transparent 1px) 0 0/100% 32px,
+      var(--paper);
     color:var(--slate);
     font-family:'Inter',sans-serif;
-    line-height:1.5;
+    line-height:1.55;
     -webkit-font-smoothing:antialiased;
   }
   h1,h2,h3{
-    font-family:'Space Grotesk',sans-serif;
+    font-family:'Fraunces',serif;
     color:var(--ink);
     margin:0;
+    font-weight:600;
   }
   .mono{font-family:'IBM Plex Mono',monospace;}
   a{color:inherit;}
   .wrap{max-width:1080px;margin:0 auto;padding:0 24px;}
+
   nav{
     display:flex;align-items:center;justify-content:space-between;
-    padding:20px 0;
+    padding:22px 0;
   }
-  .brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;font-size:18px;color:var(--ink);}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Fraunces';font-weight:600;font-size:19px;color:var(--ink);}
   .brand img{width:32px;height:32px;border-radius:8px;}
-  .nav-links{display:flex;gap:28px;font-size:14px;font-weight:500;color:var(--muted);}
+  .nav-links{display:flex;gap:26px;font-size:13.5px;font-weight:600;color:var(--muted);}
   .nav-links a{text-decoration:none;}
-  .nav-links a:hover{color:var(--ink);}
-  .hero{padding:64px 0 40px;display:grid;grid-template-columns:1.1fr 1fr;gap:56px;align-items:center;}
+  .nav-links a:hover{color:var(--ledger);}
+  .nav-links .guide-link{color:var(--brass);}
+
+  /* ---------- HERO ---------- */
+  .hero{padding:46px 0 34px;display:grid;grid-template-columns:1.1fr 1fr;gap:56px;align-items:center;}
   .eyebrow{
     display:inline-flex;align-items:center;gap:8px;
-    font-family:'IBM Plex Mono';font-size:12px;font-weight:600;letter-spacing:.04em;
-    color:var(--navy);background:#EEF2FF;border:1px solid #DCE3FA;
-    padding:6px 12px;border-radius:100px;margin-bottom:20px;
+    font-family:'IBM Plex Mono';font-size:11.5px;font-weight:600;letter-spacing:.06em;
+    color:var(--ledger);background:#fff;border:1px solid var(--paper-line);
+    padding:6px 12px;border-radius:3px;margin-bottom:20px;
   }
-  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--emerald);}
-  .hero h1{font-size:44px;line-height:1.12;font-weight:700;letter-spacing:-0.01em;}
-  .hero h1 span{color:var(--navy);}
-  .hero p.lead{font-size:17px;color:var(--muted);margin-top:18px;max-width:480px;}
-  .cta-row{display:flex;gap:14px;align-items:center;margin-top:30px;flex-wrap:wrap;}
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--stamp);}
+  .hero h1{font-size:46px;line-height:1.1;letter-spacing:-0.01em;}
+  .hero h1 em{font-style:italic;color:var(--ledger);}
+  .hero p.lead{font-size:16.5px;color:var(--muted);margin-top:18px;max-width:460px;}
+  .cta-row{display:flex;gap:14px;align-items:center;margin-top:28px;flex-wrap:wrap;}
   .btn-primary{
     display:inline-flex;align-items:center;gap:10px;
-    background:var(--navy);color:#fff;font-weight:600;font-size:15px;
-    padding:14px 22px;border-radius:10px;text-decoration:none;
-    box-shadow:0 1px 2px rgba(15,23,42,.08);
+    background:var(--ledger);color:#fff;font-weight:600;font-size:15px;
+    padding:14px 22px;border-radius:6px;text-decoration:none;
+    box-shadow:0 1px 2px rgba(11,41,66,.15);
     transition:transform .15s ease, box-shadow .15s ease;
   }
-  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(30,58,138,.25);}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 10px 22px rgba(11,41,66,.28);}
   .btn-secondary{
     display:inline-flex;align-items:center;gap:8px;
-    color:var(--navy);font-weight:600;font-size:14px;text-decoration:none;
-    border-bottom:1px solid transparent;
+    color:var(--ledger);font-weight:600;font-size:14px;text-decoration:none;
+    border-bottom:1.5px solid var(--brass);
   }
-  .btn-secondary:hover{border-color:var(--navy);}
   .meta-line{font-size:13px;color:var(--muted);margin-top:14px;}
   .meta-line .mono{color:var(--slate);}
+  .warn-line{font-size:13px;margin-top:10px;color:#8A5A15;background:var(--brass-soft);
+    border:1px solid #E2CE9A;padding:10px 14px;border-radius:6px;display:inline-block;}
+  .warn-line a{color:#8A5A15;text-decoration:underline;}
+
+  /* ---------- Clear download panel ---------- */
+  .download-panel{
+    margin-top:30px;background:#fff;border:1.5px solid var(--paper-line);border-radius:12px;
+    padding:26px 26px 22px;box-shadow:0 14px 30px rgba(15,27,51,.08);max-width:480px;
+  }
+  .btn-big{width:100%;justify-content:center;font-size:16.5px;padding:17px 22px;}
+  .file-meta{display:block;text-align:center;font-size:11.5px;color:var(--muted);margin-top:10px;letter-spacing:.02em;}
+  .install-steps{display:flex;flex-direction:column;gap:14px;margin:22px 0 18px;padding-top:18px;border-top:1px dashed var(--paper-line);}
+  .istep{display:flex;align-items:flex-start;gap:12px;font-size:13px;color:var(--slate);}
+  .istep strong{color:var(--ink);font-size:13.5px;}
+  .istep-num{
+    flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:var(--ledger);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono';font-size:12px;font-weight:700;
+  }
+  .download-panel .btn-secondary{margin-top:4px;display:inline-flex;font-size:13.5px;}
+
+  /* stamp visual */
   .visual{position:relative;height:340px;display:flex;align-items:center;justify-content:center;}
-  .sheet{
-    position:absolute;width:210px;height:130px;border-radius:12px;
-    background:#fff;border:1.5px solid var(--line);
-    box-shadow:0 10px 30px rgba(15,23,42,.06);
-    padding:14px;
-    animation:settle 1.1s cubic-bezier(.22,1,.36,1) both;
+  .ledger-card{
+    position:relative;width:280px;background:#fff;border:1px solid var(--paper-line);
+    border-radius:8px;padding:22px 22px 18px;box-shadow:0 22px 44px rgba(11,41,66,.14);
+    animation:rise .9s cubic-bezier(.22,1,.36,1) both;
   }
-  .sheet .ln{height:8px;border-radius:4px;background:#E2E8F0;margin-bottom:8px;}
-  .sheet .ln.short{width:60%;}
-  .sheet.s1{transform:translate(-92px,-58px) rotate(-9deg);animation-delay:.05s;}
-  .sheet.s2{transform:translate(78px,-46px) rotate(7deg);animation-delay:.18s;}
-  .sheet.s3{transform:translate(-8px,-8px) rotate(-2deg);animation-delay:.3s;}
-  .result{
-    position:relative;width:230px;background:var(--navy);border-radius:14px;
-    padding:18px;color:#fff;box-shadow:0 20px 40px rgba(30,58,138,.28);
-    animation:rise 1.1s cubic-bezier(.22,1,.36,1) both;animation-delay:.55s;
-    z-index:2;
+  .ledger-card .row{display:flex;justify-content:space-between;font-family:'IBM Plex Mono';
+    font-size:12px;color:var(--slate);padding:7px 0;border-bottom:1px dashed var(--paper-line);}
+  .ledger-card .row:last-of-type{border-bottom:none;}
+  .ledger-card .total{display:flex;justify-content:space-between;font-family:'IBM Plex Mono';
+    font-weight:600;font-size:14px;margin-top:12px;padding-top:12px;border-top:2px solid var(--ink);color:var(--ink);}
+  .stamp-badge{
+    position:absolute;top:-18px;right:-18px;width:74px;height:74px;border-radius:50%;
+    background:#fff;border:2.5px solid var(--stamp);color:var(--stamp);
+    display:flex;align-items:center;justify-content:center;text-align:center;
+    font-family:'IBM Plex Mono';font-size:9px;font-weight:700;letter-spacing:.03em;
+    transform:rotate(-14deg);box-shadow:0 6px 16px rgba(37,99,235,.22);
+    animation:pop .5s cubic-bezier(.22,1,.36,1) .5s both;
   }
-  .result .head{display:flex;justify-content:space-between;align-items:center;font-family:'IBM Plex Mono';font-size:11px;color:#C7D2FE;margin-bottom:12px;}
-  .result .check{width:16px;height:16px;border-radius:50%;background:var(--emerald);display:flex;align-items:center;justify-content:center;font-size:10px;}
-  .bars{display:flex;align-items:flex-end;gap:6px;height:54px;margin-bottom:10px;}
-  .bars div{flex:1;background:linear-gradient(180deg,#93C5FD,#3B82F6);border-radius:3px;}
-  .result .total{font-family:'IBM Plex Mono';font-size:13px;font-weight:600;display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,.15);padding-top:10px;}
-  @keyframes settle{from{opacity:0;transform:translate(0,-10px) scale(.92);}}
-  @keyframes rise{from{opacity:0;transform:translateY(24px) scale(.94);}to{opacity:1;}}
-  @media (prefers-reduced-motion: reduce){.sheet,.result{animation:none;}}
-  section{padding:64px 0;}
-  .section-head{max-width:560px;margin-bottom:40px;}
+  @keyframes rise{from{opacity:0;transform:translateY(20px) scale(.96);}to{opacity:1;}}
+  @keyframes pop{from{opacity:0;transform:rotate(-14deg) scale(.6);}to{opacity:1;transform:rotate(-14deg) scale(1);}}
+  @media (prefers-reduced-motion: reduce){.ledger-card,.stamp-badge{animation:none;}}
+
+  section{padding:56px 0;}
+  .section-head{max-width:560px;margin-bottom:36px;}
   .section-head .eyebrow{margin-bottom:14px;}
-  .section-head h2{font-size:30px;font-weight:700;}
-  .section-head p{color:var(--muted);margin-top:12px;font-size:15.5px;}
-  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
-  .fcard{
-    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px;
+  .section-head h2{font-size:28px;}
+  .section-head p{color:var(--muted);margin-top:12px;font-size:15px;}
+
+  /* ---------- GUIDE (embedded, scroll-into-view) ---------- */
+  #guide{padding-top:8px;}
+  .guide-frame-wrap{
+    background:var(--card);border:1px solid var(--paper-line);border-radius:10px;
+    overflow:hidden;box-shadow:0 16px 34px rgba(11,41,66,.08);
   }
-  .fcard .icon{width:36px;height:36px;border-radius:9px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--navy);}
-  .fcard h3{font-size:15.5px;font-weight:600;margin-bottom:8px;}
+  .guide-bar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 18px;background:var(--ledger);color:#fff;font-family:'IBM Plex Mono';font-size:12.5px;
+  }
+  .guide-bar .dots{display:flex;gap:6px;}
+  .guide-bar .dots span{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.35);}
+  .guide-bar a{color:#BFD3FA;text-decoration:none;font-weight:600;}
+  .guide-bar a:hover{text-decoration:underline;}
+  #guideFrame{width:100%;height:760px;border:0;display:block;background:#fff;}
+  .guide-hint{font-size:12.5px;color:var(--muted);margin-top:10px;text-align:center;}
+
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+  .fcard{
+    background:var(--card);border:1px solid var(--paper-line);border-radius:8px;padding:22px 20px;
+  }
+  .fcard .icon{width:34px;height:34px;border-radius:6px;background:var(--brass-soft);display:flex;align-items:center;justify-content:center;margin-bottom:16px;color:var(--brass);font-family:'IBM Plex Mono';font-weight:700;}
+  .fcard h3{font-size:15px;font-weight:600;margin-bottom:8px;font-family:'Fraunces';}
   .fcard p{font-size:13.5px;color:var(--muted);margin:0;}
+
   .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative;}
   .step{position:relative;padding:0 20px 0 0;}
-  .step .num{font-family:'IBM Plex Mono';font-size:13px;color:var(--navy);font-weight:600;margin-bottom:10px;display:block;}
-  .step h3{font-size:15px;font-weight:600;margin-bottom:6px;}
+  .step .num{font-family:'IBM Plex Mono';font-size:13px;color:var(--brass);font-weight:700;margin-bottom:10px;display:block;}
+  .step h3{font-size:15px;font-weight:600;margin-bottom:6px;font-family:'Fraunces';}
   .step p{font-size:13.5px;color:var(--muted);margin:0;}
   .step:not(:last-child)::after{
-    content:"";position:absolute;top:9px;right:0;width:100%;height:1px;background:var(--line);
+    content:"";position:absolute;top:9px;right:0;width:100%;height:1px;background:var(--paper-line);
   }
+
   .band{
-    background:var(--navy-deep);color:#fff;border-radius:20px;padding:40px;
+    background:var(--ledger-deep);color:#fff;border-radius:10px;padding:40px;
     display:flex;align-items:center;justify-content:space-between;gap:30px;flex-wrap:wrap;
+    background-image:linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px);
+    background-size:100% 26px;
   }
-  .band h2{color:#fff;font-size:24px;}
-  .band p{color:#C7D2FE;margin-top:8px;max-width:460px;font-size:14.5px;}
+  .band h2{color:#fff;font-size:23px;}
+  .band p{color:#C9D6DD;margin-top:8px;max-width:460px;font-size:14.5px;}
   .band .badge{
-    font-family:'IBM Plex Mono';font-size:12px;background:rgba(16,185,129,.15);
-    color:#6EE7B7;border:1px solid rgba(16,185,129,.3);padding:8px 14px;border-radius:100px;
+    font-family:'IBM Plex Mono';font-size:12px;background:rgba(37,99,235,.2);
+    color:#8FB2FA;border:1px solid rgba(37,99,235,.4);padding:8px 14px;border-radius:100px;
     display:inline-flex;align-items:center;gap:8px;
   }
-  .note{
-    border:1px solid #FDE68A;background:#FFFBEB;border-radius:12px;padding:18px 20px;
-    font-size:13.5px;color:#92400E;display:flex;gap:12px;
-  }
-  .faq{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:12px;overflow:hidden;}
+
+  .faq{border:1px solid var(--paper-line);border-radius:8px;background:var(--card);margin-bottom:12px;overflow:hidden;}
   .faq summary{
-    padding:18px 20px;font-weight:600;font-size:14.5px;color:var(--ink);
+    padding:17px 20px;font-weight:600;font-size:14.5px;color:var(--ink);
     cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;
   }
   .faq summary::-webkit-details-marker{display:none;}
   .faq summary::after{content:"+";font-size:20px;color:var(--muted);font-weight:400;}
   .faq[open] summary::after{content:"−";}
-  .faq[open] summary{border-bottom:1px solid var(--line);}
+  .faq[open] summary{border-bottom:1px solid var(--paper-line);}
   .faq p{margin:0;padding:16px 20px;font-size:13.5px;color:var(--muted);}
-  footer{border-top:1px solid var(--line);padding:32px 0;margin-top:20px;}
+
+  footer{border-top:1px solid var(--paper-line);padding:30px 0;margin-top:16px;}
   .foot-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap;gap:12px;}
+
+  a:focus-visible, button:focus-visible{outline:2px solid var(--brass);outline-offset:2px;}
+
   @media (max-width:840px){
     .hero{grid-template-columns:1fr;}
-    .visual{height:280px;}
+    .visual{height:260px;}
     .grid4{grid-template-columns:repeat(2,1fr);}
     .steps{grid-template-columns:repeat(2,1fr);row-gap:28px;}
     .step:nth-child(2)::after{display:none;}
-    .hero h1{font-size:34px;}
+    .hero h1{font-size:33px;}
+    #guideFrame{height:560px;}
   }
 </style>
 </head>
@@ -168,43 +217,72 @@
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
+      <a href="#guide" class="guide-link">User Guide</a>
       <a href="#faq">FAQ</a>
       <a href="https://github.com/Sakina-1504/datafusion" target="_blank">Source</a>
-      <a href="https://sakina-1504.github.io/datafusion/MyDataFusionApp_Guide.html">User Guide</a>
     </div>
   </nav>
+
   <section class="hero">
     <div>
       <div class="eyebrow"><span class="dot"></span>WORKS FULLY OFFLINE</div>
-      <h1>Turn scattered Excel<br>invoices into <span>one clean report</span></h1>
+      <h1>Turn scattered Excel<br>invoices into <em>one clean report</em></h1>
       <p class="lead">DataFusion Platform merges GST invoice data from multiple Excel files, checks it for errors and tax mismatches, and exports a single formatted report — in a few clicks, on your own machine.</p>
-      <div class="cta-row">
-        <a class="btn-primary" href="https://github.com/Sakina-1504/datafusion/releases/download/v1.1.0/DataFusionPlatform.exe">
+
+      <div class="download-panel">
+        <a class="btn-primary btn-big" href="https://github.com/Sakina-1504/datafusion/releases/download/v1.1.0/DataFusionPlatform.exe">
           ⬇ Download for Windows
         </a>
-        <a class="btn-secondary" href="#how">See how it works →</a>
-      </div>
-      <div class="meta-line">Free · Works offline · <span class="mono">v1.1</span></div>
-      <div class="meta-line" style="margin-top:8px;color:#92400E;">
-        ⚠️ Windows may show a blue "protected your PC" warning after downloading — this is normal for new apps.
-        Click <strong>"More info" → "Run anyway"</strong> to continue. <a href="#faq" style="color:#92400E;text-decoration:underline;">Details in FAQ</a>
+        <div class="file-meta mono">DataFusionPlatform.exe &nbsp;·&nbsp; v1.1 &nbsp;·&nbsp; ~48 MB &nbsp;·&nbsp; Free, no sign-up</div>
+
+        <div class="install-steps">
+          <div class="istep">
+            <span class="istep-num">1</span>
+            <div><strong>Download</strong><br>Click the button above</div>
+          </div>
+          <div class="istep">
+            <span class="istep-num">2</span>
+            <div><strong>Run it</strong><br>See a blue warning? Click "More info" → "Run anyway"</div>
+          </div>
+          <div class="istep">
+            <span class="istep-num">3</span>
+            <div><strong>Start using it</strong><br>The app opens straight into the dashboard</div>
+          </div>
+        </div>
+
+        <a class="btn-secondary" href="#guide">Need help? Read the User Guide ↓</a>
       </div>
     </div>
     <div class="visual" aria-hidden="true">
-      <div class="sheet s1"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
-      <div class="sheet s2"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
-      <div class="sheet s3"><div class="ln short"></div><div class="ln"></div><div class="ln"></div></div>
-      <div class="result">
-        <div class="head"><span>CONSOLIDATED.XLSX</span><span class="check">✓</span></div>
-        <div class="bars">
-          <div style="height:35%"></div><div style="height:60%"></div>
-          <div style="height:45%"></div><div style="height:85%"></div>
-          <div style="height:55%"></div><div style="height:70%"></div>
-        </div>
+      <div class="ledger-card">
+        <div class="stamp-badge">VALIDATED<br>✓ OK</div>
+        <div class="row"><span>Demo1.xlsx</span><span>₹1,42,300</span></div>
+        <div class="row"><span>Demo2.xlsx</span><span>₹2,18,900</span></div>
+        <div class="row"><span>Demo3.xlsx</span><span>₹1,21,400</span></div>
         <div class="total"><span>GRAND TOTAL</span><span>₹4,82,600</span></div>
       </div>
     </div>
   </section>
+
+  <!-- ===== USER GUIDE — embedded inline, right below the download CTA ===== -->
+  <section id="guide">
+    <div class="section-head">
+      <div class="eyebrow"><span class="dot"></span>USER GUIDE</div>
+      <h2>Everything you need to get started</h2>
+      <p>The full step-by-step guide is embedded right here — scroll inside the box below to read it from top to bottom, no separate download or click-away required.</p>
+    </div>
+    <div class="guide-frame-wrap">
+      <div class="guide-bar">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <span>MyDataFusionApp_Guide.html</span>
+        <a href="MyDataFusionApp_Guide.html" target="_blank">Open full screen ↗</a>
+      </div>
+      <iframe id="guideFrame" src="MyDataFusionApp_Guide.html" title="DataFusion Platform User Guide" loading="lazy"></iframe>
+    </div>
+    <p class="guide-hint">👆 That's a live, scrollable copy of the guide — hover over it and scroll with your mouse/trackpad to read every step, install instructions, and screenshots.</p>
+  </section>
+  </section>
+
   <section id="features">
     <div class="section-head">
       <div class="eyebrow"><span class="dot"></span>FEATURES</div>
@@ -234,6 +312,7 @@
       </div>
     </div>
   </section>
+
   <section id="how">
     <div class="section-head">
       <div class="eyebrow"><span class="dot"></span>HOW IT WORKS</div>
@@ -246,6 +325,7 @@
       <div class="step"><span class="num">04</span><h3>Export</h3><p>Save one formatted report, ready to share or file.</p></div>
     </div>
   </section>
+
   <section>
     <div class="band">
       <div>
@@ -255,6 +335,7 @@
       <div class="badge">● OFFLINE-FIRST</div>
     </div>
   </section>
+
   <section id="faq" style="padding-top:0;">
     <div class="section-head">
       <div class="eyebrow"><span class="dot"></span>FAQ</div>
@@ -277,6 +358,7 @@
       <p>Yes, completely free to download and use, no account or sign-up required.</p>
     </details>
   </section>
+
   <footer>
     <div class="foot-row">
       <span>© 2026 DataFusion Platform</span>
