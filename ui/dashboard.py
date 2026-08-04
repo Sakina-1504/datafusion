@@ -516,13 +516,10 @@ class Dashboard:
             return []
 
         pairs = []
-        for folder_path in chosen_paths:
-            folder_name = os.path.basename(folder_path.rstrip("/\\")) or folder_path
-            for name in sorted(os.listdir(folder_path)):
-                if name.startswith("~$"):
-                    continue
-                if name.lower().endswith((".xlsx", ".xls")):
-                    pairs.append((os.path.join(folder_path, name), folder_name))
+        for file_path in chosen_paths:
+            parent_dir = os.path.dirname(file_path)
+            folder_name = os.path.basename(parent_dir.rstrip("/\\")) or parent_dir
+            pairs.append((file_path, folder_name))
         return pairs
 
     def _import_paths(self, new_paths, source_folder=None):

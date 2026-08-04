@@ -67,6 +67,92 @@ def detect_header_row(rows, max_scan=20):
     return best_idx
 
 
+def _looks_like_number(s):
+    s = s.replace(",", "").replace("(", "-").replace(")", "").replace("$", "").strip()
+    if s == "":
+        return False
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _detect_single_value_header(rows, max_scan=20):
+    """Fallback for reports like a Balance Sheet or Profit & Loss where
+    the only column heading is a single period label sitting by itself
+    above a column of numbers (e.g. "Mar 31, 25" or "Jan - Mar 25"),
+    with no Debit/Credit/Amount-style heading anywhere for
+    `detect_header_row` above to key off. Returns the header row
+    index, or None if nothing like that is found."""
+    for idx, row in enumerate(rows[:max_scan]):
+        if _header_score(row) > 0:
+            continue  # would already have matched the keyword path above
+        non_blank = [(c, str(v).strip()) for c, v in enumerate(row) if str(v).strip() != ""]
+        if len(non_blank) != 1:
+            continue
+        col, _text = non_blank[0]
+        if col == 0:
+            continue  # a single cell in column 0 is a title/company-name row, not a heading
+        below = [r[col] for r in rows[idx + 1: idx + 30] if col < len(r)]
+        numeric_below = [v for v in below if _looks_like_number(str(v))]
+        if len(numeric_below) >= 3:
+            return idx
+    return None
+
+
+def _merge_indent_columns(rows, header_idx, num_cols):
+    """Balance Sheet / P&L style reports spread the account label
+    across several columns depending on how deeply it's nested (e.g.
+    "ASSETS" in column A, "Current Assets" in column B, "Cash -
+    Checking" in column D, one level per row, mutually exclusive).
+    Detected only via `_detect_single_value_header` above, this
+    collapses those columns into one real "Account" column by taking
+    whichever one is actually populated on each row -- exactly the
+    label a person reading the original sheet would see for that
+    line -- instead of leaving several near-empty flagged columns."""
+    header_row = rows[header_idx] + [""] * (num_cols - len(rows[header_idx]))
+    value_cols = [c for c in range(num_cols) if str(header_row[c]).strip() != ""]
+    if not value_cols:
+        return
+    first_value_col = min(value_cols)
+    label_cols = [c for c in range(first_value_col) if str(header_row[c]).strip() == ""]
+    if len(label_cols) < 2:
+        return  # only one label column already -- nothing to merge
+
+    data_rows = rows[header_idx + 1:]
+    # These should be mutually-exclusive indentation levels (at most
+    # one populated per row) if this really is an indent hierarchy.
+    # A rare row where a leaf account repeats its parent's exact label
+    # (e.g. "Opening Balance Equity" as both the section and the
+    # account) is harmless -- the rightmost cell is still the right
+    # value to keep. Only bail out if violations are common enough
+    # that this doesn't look like an indent hierarchy at all.
+    populated_rows = 0
+    violations = 0
+    for r in data_rows:
+        populated = [c for c in label_cols if c < len(r) and str(r[c]).strip() != ""]
+        if populated:
+            populated_rows += 1
+        if len(populated) > 1:
+            violations += 1
+    if populated_rows and violations / populated_rows > 0.05:
+        return
+
+    target = label_cols[0]
+    for r in data_rows:
+        while len(r) <= max(label_cols + [target]):
+            r.append("")
+        value = ""
+        for c in reversed(label_cols):
+            if str(r[c]).strip() != "":
+                value = r[c]
+                break
+        for c in label_cols:
+            r[c] = ""
+        r[target] = value
+
+
 def needs_organizing(raw_result):
     """True if ANY sheet in this raw (header=None) file has its real
     header row somewhere below row 0 -- i.e. the file has title rows
@@ -133,11 +219,20 @@ def organize_sheet(rows):
         return None
     rows = [list(r) for r in rows]  # ensure every row is mutable
     header_idx = detect_header_row(rows)
+    used_fallback_header = False
     if header_idx is None:
-        header_idx = 0  # nothing messy found -- treat row 0 as header
+        header_idx = _detect_single_value_header(rows)
+        if header_idx is not None:
+            used_fallback_header = True
+        else:
+            header_idx = 0  # nothing messy found -- treat row 0 as header
 
     num_cols = max(len(r) for r in rows)
     header_row = rows[header_idx] + [""] * (num_cols - len(rows[header_idx]))
+
+    if used_fallback_header:
+        _merge_indent_columns(rows, header_idx, num_cols)
+
 
     # A column whose ONLY value in the whole sheet is the literal word
     # "TOTAL" is a grand-total marker carried over from the source
@@ -228,6 +323,7 @@ def organize_workbook_raw(raw_result):
             "row_count": organized["row_count"],
             "columns": organized["columns"],
             "data": organized["data"],
+            "title": organized["title"],
         }
     return {
         "file_name": raw_result["file_name"],

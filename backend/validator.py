@@ -91,8 +91,22 @@ def validate_sheet(data, columns):
     }
 
     # ---- 1. Required field completeness ----
+    # This check only makes sense for an invoice-level GST register --
+    # an "Invoice No" column is what actually marks a sheet as one. A
+    # trial balance, balance sheet, or fixed-asset register can easily
+    # have its own column literally named "Amount" (e.g. a fixed asset
+    # purchase amount) -- that's not a taxable/GST value, it just
+    # happens to share the word "amount". Flagging every blank cell in
+    # that column as a missing "Taxable Amount" would be a false
+    # alarm on a sheet that was never a GST document to begin with, so
+    # skip this whole section unless the sheet has an invoice number
+    # column (the one reliable signal it's actually a GST-style sheet).
+    is_gst_style_sheet = "invoice_no" in mapping
     required_fields = ["invoice_no", "taxable_amount"]
     for field in required_fields:
+        if not is_gst_style_sheet:
+            skipped.append(f"required-field check for '{field}' (not a GST-style invoice sheet)")
+            continue
         if field not in mapping:
             skipped.append(f"required-field check for '{field}' (column not found)")
             continue

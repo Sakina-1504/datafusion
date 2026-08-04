@@ -25,7 +25,6 @@ ROUNDING_TOLERANCE = 1.0
 
 COMPANY_COLUMN = "Company Name"
 
-
 def _to_number(value, default=0.0):
     try:
         if value == "" or value is None:
@@ -76,6 +75,7 @@ def merge_files(file_results, company_names=None):
                 tagged_row.update(row)
                 tagged_row["__source_file"] = file_name
                 tagged_row["__source_sheet"] = sheet_name
+                tagged_row["__report_title"] = sheet.get("title", "")
                 merged_rows.append(tagged_row)
 
     return {"rows": merged_rows, "columns": all_columns}

@@ -26,6 +26,8 @@ from datetime import datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 
 from backend.filters import numeric_columns, grand_totals
 from backend.column_mapper import detect_columns
@@ -99,19 +101,51 @@ def _credit_debit_checkpoint(rows, columns):
     }
 
 
+_TITLE_DATE_RE = re.compile(
+    r"(As of\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\b[A-Za-z]{3}\s+\d{1,2},\s*\d{2}\b)"
+)
+
+
+def _title_rich_text(title):
+    """Returns the report title/period text (e.g. 'GSR Foods II, LLC -
+    Trial Balance - As of March 31, 2025 - Mar 31, 25') with any date
+    portion rendered in bold, as an openpyxl rich-text value. Falls
+    back to the plain string when there's no date to bold."""
+    if not title:
+        return title
+    matches = list(_TITLE_DATE_RE.finditer(title))
+    if not matches:
+        return title
+    bold_font = InlineFont(b=True)
+    blocks = []
+    pos = 0
+    for m in matches:
+        if m.start() > pos:
+            blocks.append(title[pos:m.start()])
+        blocks.append(TextBlock(bold_font, m.group()))
+        pos = m.end()
+    if pos < len(title):
+        blocks.append(title[pos:])
+    return CellRichText(*blocks)
+
+
 def _source_files_breakdown(rows):
     """Groups consolidated rows by the file they came from, so each
     'sub file' that went into the report can be listed on its own
-    reference sheet -- file name, company name assigned to it, and
-    how many rows it contributed."""
+    reference sheet -- file name, company name assigned to it, how
+    many rows it contributed, and the report title/period detected
+    in the source file (e.g. "Trial Balance - As of March 31, 2025"),
+    if any."""
     breakdown = {}
     order = []
     for row in rows:
         fname = row.get("__source_file", "Unknown")
         if fname not in breakdown:
-            breakdown[fname] = {"company_name": row.get("Company Name", ""), "row_count": 0}
+            breakdown[fname] = {"company_name": row.get("Company Name", ""), "row_count": 0, "report_title": ""}
             order.append(fname)
         breakdown[fname]["row_count"] += 1
+        if not breakdown[fname]["report_title"] and row.get("__report_title"):
+            breakdown[fname]["report_title"] = row["__report_title"]
     return order, breakdown
 
 
@@ -134,26 +168,22 @@ BOUNDARY_TOP_SIDE = Side(style="medium", color="1E3A8A")
 
 def _shade_source_file_groups(ws, rows, num_columns, start_row=1):
     """Purely cosmetic pass over the Consolidated Data sheet: doesn't
-    touch any cell value, doesn't add/remove rows. It just alternates
-    a light background tint each time the source file changes, and
-    draws a bold top border on the first row of every new file's
-    block -- so it's visually obvious where one source file's data
-    ends and the next one's begins."""
-    prev_file = None
-    group_idx = -1
+    touch any cell value, doesn't add/remove rows, and doesn't tint
+    the background. It just draws a bold top border on the first row
+    of every new source file/sheet block -- so it's visually obvious
+    where one sheet's (or file's) data ends and the next one's begins,
+    even when every row came from the same workbook (e.g. a Trial
+    Balance sheet vs a Balance Sheet vs a P&L sheet all in one file)."""
+    prev_group = None
     r = start_row
     for row in rows:
         r += 1
-        fname = row.get("__source_file", "")
-        is_boundary = prev_file is not None and fname != prev_file
-        if fname != prev_file:
-            group_idx += 1
-            prev_file = fname
-        fill = GROUP_SHADE_FILLS[group_idx % 2]
-        for c_idx in range(1, num_columns + 1):
-            cell = ws.cell(row=r, column=c_idx)
-            cell.fill = fill
-            if is_boundary:
+        group_key = (row.get("__source_file", ""), row.get("__source_sheet", ""))
+        is_boundary = prev_group is not None and group_key != prev_group
+        prev_group = group_key
+        if is_boundary:
+            for c_idx in range(1, num_columns + 1):
+                cell = ws.cell(row=r, column=c_idx)
                 existing = cell.border
                 cell.border = Border(
                     left=existing.left, right=existing.right,
@@ -201,6 +231,70 @@ def _highlight_total_rows(ws, columns, rows, start_row=1):
                 left=existing.left, right=existing.right,
                 top=BOUNDARY_TOP_SIDE, bottom=BOUNDARY_TOP_SIDE,
             )
+
+
+_TOTAL_WORD_RE = re.compile(r"\btotal\b", re.IGNORECASE)
+
+
+def _bold_subtotal_label_rows(ws, columns, rows, start_row=1):
+    """Some source files carry subtotal lines that are worded like
+    "Total Cash - Checking", "Total Checking/Savings", "Total Current
+    Assets", etc. -- the word "TOTAL" is only part of the cell's text,
+    not the whole cell, so `_highlight_total_rows` (exact-match only)
+    skips them and they land in the export looking like an ordinary
+    line item even though they're really a rolled-up figure carried
+    over from a different part of the source sheet.
+
+    This bolds the label cell (so "Total" stands out) and bolds
+    whichever cell(s) in that same row hold the actual number, so the
+    user can immediately see it's a subtotal, not a regular row --
+    without touching fill color, borders, or any other row already
+    handled by `_highlight_total_rows`."""
+    r = start_row
+    for row in rows:
+        r += 1
+        label_idx = None
+        for idx, col in enumerate(columns):
+            text = str(row.get(col, "")).strip()
+            if text.upper() == "TOTAL":
+                # Exact match -- already handled elsewhere.
+                label_idx = None
+                break
+            if _TOTAL_WORD_RE.search(text):
+                label_idx = idx
+                break
+        if label_idx is None:
+            continue
+
+        for c_idx, col in enumerate(columns, start=1):
+            cell = ws.cell(row=r, column=c_idx)
+            value = row.get(col, "")
+            is_label = (c_idx - 1) == label_idx
+            is_amount = value not in ("", None) and not is_label
+            if is_label or is_amount:
+                existing = cell.font
+                cell.font = Font(
+                    name=existing.name, size=existing.size, bold=True,
+                    italic=existing.italic, color=existing.color,
+                )
+
+
+def _bold_company_name_column(ws, columns, num_rows, start_row=1):
+    """Bolds every cell in the "Company Name" column on the
+    Consolidated Data sheet (header already bold from the header
+    style -- this covers the data rows below it), so the company each
+    row belongs to stands out at a glance. Purely cosmetic -- doesn't
+    touch any other column, fill, or border."""
+    if "Company Name" not in columns:
+        return
+    col_idx = columns.index("Company Name") + 1
+    for r in range(start_row + 1, start_row + 1 + num_rows):
+        cell = ws.cell(row=r, column=col_idx)
+        existing = cell.font
+        cell.font = Font(
+            name=existing.name, size=existing.size, bold=True,
+            italic=existing.italic, color=existing.color,
+        )
 
 
 def _write_table(ws, columns, rows, start_row=1, add_grand_total=True):
@@ -316,181 +410,19 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
             row["Account"] = merged_val
             row.pop("Account (2)", None)
         columns = [c for c in columns if c != "Account (2)"]
-    has_source = bool(rows) and "__source_file" in rows[0]
-    display_columns = columns + (["Source File"] if has_source else [])
+    has_sheet = bool(rows) and any(row.get("__source_sheet") for row in rows)
+    display_columns = (
+        (["Source Sheet"] if has_sheet else [])
+        + columns
+    )
 
-    consolidated_at_text = (consolidated_at or datetime.now()).strftime("%d-%b-%Y %I:%M %p")
-
-    # ---------- 1. Index / how-to-use sheet ----------
-    ws_idx = wb.active
-    ws_idx.title = "Index"
-    ws_idx["A1"] = "DataFusion Platform -- Report Guide"
-    ws_idx["A1"].font = TITLE_FONT
-    ws_idx["A2"] = f"Consolidated on: {consolidated_at_text}   |   Exported on: {datetime.now().strftime('%d-%b-%Y %I:%M %p')}"
-    ws_idx["A2"].font = Font(italic=True, size=10, color="666666")
-
-    guide_rows = [
-        ("Summary", "Headline totals, files used, credit/debit checkpoint, CGST/SGST/IGST and data-quality snapshot."),
-        ("Source Files", "Every source file (sub file) that went into this report, with the Company Name assigned to it and how many rows it contributed. Click a 'Source File' cell on Consolidated Data to jump here."),
-        ("Consolidated Data", "Every row from every imported file, merged, with a Company Name column, a clickable Source File reference, and a Grand Total row."),
-        ("Company Summary", "Taxable value, tax and row count per company -- useful when you're handling more than one client at once."),
-    ]
-    # "Issues Found" is only listed in the guide if the report actually
-    # ends up with an Issues Found sheet (i.e. there's at least one
-    # real data-quality issue to show).
-    _has_issues = bool(validation_issues) and any(
-        len(v) for v in validation_issues.values()
-    ) if isinstance(validation_issues, dict) else bool(validation_issues)
-    if _has_issues:
-        guide_rows.append(
-            ("Issues Found", "Every data-quality issue detected (missing fields, invalid GSTIN, duplicates, tax mismatches) with its exact file/sheet/row reference.")
-        )
-    r = 4
-    header_row = r
-    for c_idx, text in ((1, "Sheet"), (2, "What it's for")):
-        cell = ws_idx.cell(row=r, column=c_idx, value=text)
-        cell.font = HEADER_FONT
-        cell.fill = HEADER_FILL
-        cell.border = THIN_BORDER
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-    for name, desc in guide_rows:
-        r += 1
-        band_fill = GROUP_SHADE_FILLS[(r - header_row) % 2]
-        name_cell = ws_idx.cell(row=r, column=1, value=name)
-        name_cell.font = Font(bold=True)
-        name_cell.border = THIN_BORDER
-        name_cell.fill = band_fill
-        name_cell.alignment = Alignment(vertical="center")
-        desc_cell = ws_idx.cell(row=r, column=2, value=desc)
-        desc_cell.border = THIN_BORDER
-        desc_cell.fill = band_fill
-        desc_cell.alignment = Alignment(vertical="center", wrap_text=True)
-    ws_idx.column_dimensions["A"].width = 22
-    ws_idx.column_dimensions["B"].width = 95
-    ws_idx.freeze_panes = ws_idx.cell(row=header_row + 1, column=1)
-
-    # ---------- 2. Summary sheet ----------
-    ws = wb.create_sheet("Summary")
-    ws["A1"] = "DataFusion Platform -- Consolidation Summary"
-    ws["A1"].font = TITLE_FONT
-    ws["A2"] = f"Consolidated on: {consolidated_at_text}"
-    ws["A2"].font = Font(italic=True, size=10, color="666666")
-    ws["A3"] = f"Report generated/exported on: {datetime.now().strftime('%d-%b-%Y %I:%M %p')}"
-    ws["A3"].font = Font(italic=True, size=10, color="666666")
-
-    r = 5
-    ws.cell(row=r, column=1, value="Files included in this export:").font = Font(bold=True)
-    r += 1
-    for f in (source_files or []):
-        ws.cell(row=r, column=1, value=f"  - {f}")
-        r += 1
-
-    r += 1
-    ws.cell(row=r, column=1, value="Grand Totals").font = Font(bold=True, size=13, color="1E3A8A")
-    r += 1
-    totals = grand_totals(rows, columns)
-    ws.cell(row=r, column=1, value="Total Rows").font = Font(bold=True)
-    ws.cell(row=r, column=2, value=len(rows))
-    r += 1
-
-    # If a Debit/Credit Checkpoint section is about to be shown below,
-    # skip those same two columns here -- otherwise "Total Debit" and
-    # "Total Credit" get printed twice (once here, once in the
-    # Checkpoint section a few rows down), which crowds the sheet and
-    # makes the two nearly-identical rows hard to tell apart.
-    checkpoint = _credit_debit_checkpoint(rows, columns)
-    has_checkpoint_section = checkpoint is not None and sections.get("checkpoint", True)
-    skip_cols = {checkpoint["debit_col"], checkpoint["credit_col"]} if has_checkpoint_section else set()
-
-    for col, total in totals.items():
-        if col in skip_cols:
-            continue
-        ws.cell(row=r, column=1, value=f"Total {col}").font = Font(bold=True)
-        cell = ws.cell(row=r, column=2, value=total)
-        cell.number_format = "#,##,##0.00"
-        r += 1
-
-    if has_checkpoint_section:
-        r += 1
-        ws.cell(row=r, column=1, value="Checkpoint: Credit = Debit").font = Font(bold=True, size=13, color="1E3A8A")
-        r += 1
-        ws.cell(row=r, column=1, value=f"Total {checkpoint['debit_col']}").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["total_debit"]).number_format = "#,##,##0.00"
-        r += 1
-        ws.cell(row=r, column=1, value=f"Total {checkpoint['credit_col']}").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["total_credit"]).number_format = "#,##,##0.00"
-        r += 1
-        ws.cell(row=r, column=1, value="Difference (Debit - Credit)").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=checkpoint["difference"]).number_format = "#,##,##0.00"
-        r += 1
-        colr = "16A34A" if checkpoint["matched"] else "B91C1C"
-        status_text = "\u2714 Matched -- Credit and Debit tie out" if checkpoint["matched"] else "\u26A0 Mismatch -- Credit and Debit do not tie out"
-        ws.cell(row=r, column=1, value="Checkpoint Status").font = Font(bold=True, color=colr)
-        ws.cell(row=r, column=2, value=status_text).font = Font(bold=True, color=colr)
-
-    if gst_summary and "error" not in gst_summary and sections.get("gst", True):
-        r += 1
-        ws.cell(row=r, column=1, value="CGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("cgst_total", 0)).number_format = "#,##,##0.00"
-        r += 1
-        ws.cell(row=r, column=1, value="SGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("sgst_total", 0)).number_format = "#,##,##0.00"
-        r += 1
-        ws.cell(row=r, column=1, value="IGST Total").font = Font(bold=True)
-        ws.cell(row=r, column=2, value=gst_summary.get("igst_total", 0)).number_format = "#,##,##0.00"
-        r += 1
-        mismatches = gst_summary.get("tax_mismatches", [])
-        colr = "B91C1C" if mismatches else "16A34A"
-        ws.cell(row=r, column=1, value="Tax Mismatches Found").font = Font(bold=True, color=colr)
-        ws.cell(row=r, column=2, value=len(mismatches))
-
-    if validation_issues is not None:
-        r += 2
-        if isinstance(validation_issues, dict):
-            total_issues = sum(len(v) for v in validation_issues.values())
-        else:
-            total_issues = len(validation_issues)
-        colr = "B91C1C" if total_issues else "16A34A"
-        ws.cell(row=r, column=1, value="Data Quality Issues Found").font = Font(bold=True, color=colr)
-        ws.cell(row=r, column=2, value=total_issues)
-
-    ws.column_dimensions["A"].width = 32
-    ws.column_dimensions["B"].width = 20
-
-    # ---------- 3. Source Files sheet (sub files that fed this report) ----------
-    file_order, file_breakdown = _source_files_breakdown(rows)
+    # Index / Summary / Source Files sheets removed per request --
+    # only Consolidated Data (+ Issues Found, if any) are exported.
+    # file_row_map is kept as an empty dict so the Issues Found section
+    # below (unchanged) still runs safely without a Source Files sheet
+    # to link to -- it just won't have a hyperlink target.
     file_row_map = {}
-    if file_order and sections.get("source_files", True):
-        ws_src = wb.create_sheet("Source Files")
-        ws_src["A1"] = "Source Files -- every sub file merged into this report"
-        ws_src["A1"].font = TITLE_FONT
-        src_columns = ["Sr No", "Source File", "Company Name", "Row Count"]
-        for c_idx, col in enumerate(src_columns, start=1):
-            cell = ws_src.cell(row=3, column=c_idx, value=col)
-            cell.font = HEADER_FONT
-            cell.fill = HEADER_FILL
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = THIN_BORDER
-        r_src = 3
-        for i, fname in enumerate(file_order, start=1):
-            r_src += 1
-            info = file_breakdown[fname]
-            ws_src.cell(row=r_src, column=1, value=i).border = THIN_BORDER
-            name_cell = ws_src.cell(row=r_src, column=2, value=fname)
-            name_cell.border = THIN_BORDER
-            src_path = file_paths.get(fname)
-            if src_path:
-                # Clicking the filename opens the actual source workbook on disk.
-                name_cell.hyperlink = f"file:///{src_path}"
-                name_cell.font = LINK_FONT
-            ws_src.cell(row=r_src, column=3, value=info["company_name"]).border = THIN_BORDER
-            ws_src.cell(row=r_src, column=4, value=info["row_count"]).border = THIN_BORDER
-            file_row_map[fname] = r_src
-        ws_src.freeze_panes = "A4"
-        ws_src.column_dimensions["A"].width = 8
-        ws_src.column_dimensions["B"].width = 45
-        ws_src.column_dimensions["C"].width = 30
-        ws_src.column_dimensions["D"].width = 14
+    wb.remove(wb.active)
 
     # ---------- 4. Consolidated Data sheet ----------
     ws2 = wb.create_sheet("Consolidated Data")
@@ -499,16 +431,28 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
         flat = {c: row.get(c, "") for c in columns}
         if "Source File" in display_columns:
             flat["Source File"] = row.get("__source_file", "")
+        if "Source Sheet" in display_columns:
+            flat["Source Sheet"] = row.get("__source_sheet", "")
         export_rows.append(flat)
-    last_data_row = _write_table(ws2, display_columns, export_rows)
+    last_data_row = _write_table(ws2, display_columns, export_rows, add_grand_total=False)
 
-    # Cosmetic only -- shade rows by source file and mark where a new
-    # file's data starts, so different files are easy to tell apart.
+    # Cosmetic only -- mark where a new file/sheet's data starts, so
+    # different files are easy to tell apart.
     _shade_source_file_groups(ws2, rows, len(display_columns))
+
+    # Cosmetic only -- bold the Company Name column so it stands out.
+    _bold_company_name_column(ws2, display_columns, len(export_rows))
 
     # Cosmetic only -- per-company "TOTAL" rows get their label merged
     # into the empty cell beside it and the whole row highlighted.
     _highlight_total_rows(ws2, display_columns, rows)
+
+    # Cosmetic only -- rows like "Total Cash - Checking" or "Total
+    # Current Assets" carry the word "Total" inside a longer label
+    # rather than as the whole cell, so the row above misses them.
+    # Bold the label and its amount so these subtotal rows are easy
+    # to spot instead of blending in with ordinary line items.
+    _bold_subtotal_label_rows(ws2, display_columns, rows)
 
     # Turn each "Source File" cell into a clickable reference back to
     # that file's row on the Source Files sheet.
@@ -522,51 +466,6 @@ def export_full_report(output_path, consolidated, gst_summary=None, party_summar
                 cell.hyperlink = f"#'Source Files'!B{target_row}"
                 cell.font = LINK_FONT
 
-    # ---------- 5. Company Summary sheet ----------
-    if (company_summary and "error" not in company_summary and company_summary.get("companies")
-            and sections.get("company", True)):
-        ws_co = wb.create_sheet("Company Summary")
-        co_companies = company_summary["companies"]
-        # Skip the Taxable/Tax Total columns entirely if every company's
-        # total is zero -- that means the imported data had no GST/tax
-        # columns to begin with (e.g. a plain trial balance), so showing
-        # two all-zero columns would just be noise.
-        has_tax_data = any(
-            vals.get("taxable_total") or vals.get("tax_total")
-            for vals in co_companies.values()
-        )
-        # If the data has Debit/Credit columns (e.g. a trial balance),
-        # add per-company Total Debit / Total Credit columns too.
-        co_debit_credit_mapping = detect_columns(columns)
-        co_debit_col = co_debit_credit_mapping.get("debit")
-        co_credit_col = co_debit_credit_mapping.get("credit")
-        has_debit_credit = bool(co_debit_col and co_credit_col)
-        co_debit_totals = {}
-        co_credit_totals = {}
-        if has_debit_credit:
-            for row in rows:
-                name = row.get("Company Name", "")
-                co_debit_totals[name] = co_debit_totals.get(name, 0.0) + _to_number(row.get(co_debit_col))
-                co_credit_totals[name] = co_credit_totals.get(name, 0.0) + _to_number(row.get(co_credit_col))
-
-        co_columns = ["Company Name"]
-        if has_tax_data:
-            co_columns += ["Taxable Total", "Tax Total"]
-        if has_debit_credit:
-            co_columns += ["Total Debit", "Total Credit"]
-        co_columns.append("Row Count")
-
-        co_rows = []
-        for name, vals in co_companies.items():
-            row = {"Company Name": name, "Row Count": vals["row_count"]}
-            if has_tax_data:
-                row["Taxable Total"] = vals["taxable_total"]
-                row["Tax Total"] = vals["tax_total"]
-            if has_debit_credit:
-                row["Total Debit"] = round(co_debit_totals.get(name, 0.0), 2)
-                row["Total Credit"] = round(co_credit_totals.get(name, 0.0), 2)
-            co_rows.append(row)
-        _write_table(ws_co, co_columns, co_rows, add_grand_total=False)
     # ---------- 6. Issues Found sheet ----------
     if validation_issues:
         ws5 = wb.create_sheet("Issues Found")
